@@ -51,17 +51,108 @@ class HFDataset:
         self.hf_split = hf_split
         self.transform = transform
         
-        # Extract label names from features (if present)
-        self.label_names = None
+        # Robust label name extraction with multiple fallback strategies
+        self.label_names = self._extract_label_names(hf_split)
+        
+    def _extract_label_names(self, hf_split):
+        """Extract label names using multiple strategies with graceful fallbacks"""
+        label_names = None
+        
+        # Strategy 1: Check dataset features for label names
         print(f"[DEBUG] HFDataset features: {list(hf_split.features.keys())}")
-        if "labels" in hf_split.features and hasattr(hf_split.features["labels"], "names"):
-            self.label_names = hf_split.features["labels"].names
-            print(f"[DEBUG] Extracted label names from 'labels': {self.label_names}")
-        elif "label" in hf_split.features and hasattr(hf_split.features["label"], "names"):
-            self.label_names = hf_split.features["label"].names
-            print(f"[DEBUG] Extracted label names from 'label': {self.label_names}")
-        else:
-            print("[DEBUG] No label names found in dataset features")
+        
+        # Check for various feature key patterns that might contain label names
+        feature_keys_to_check = ["labels", "label", "class", "category", "target"]
+        
+        for key in feature_keys_to_check:
+            if key in hf_split.features:
+                feature = hf_split.features[key]
+                # Check for common attribute patterns
+                if hasattr(feature, "names"):
+                    label_names = feature.names
+                    print(f"[DEBUG] Extracted label names from feature '{key}': {label_names}")
+                    return label_names
+                elif hasattr(feature, "_int2str") and callable(feature._int2str):
+                    # Handle ClassLabel.int2str mapping
+                    try:
+                        num_classes = len(hf_split)
+                        label_names = [feature._int2str(i) for i in range(num_classes)]
+                        print(f"[DEBUG] Extracted label names using _int2str from '{key}': {label_names}")
+                        return label_names
+                    except (IndexError, ValueError):
+                        continue
+                elif hasattr(feature, "names") and isinstance(feature.names, list):
+                    label_names = feature.names
+                    print(f"[DEBUG] Extracted label names from feature '{key}': {label_names}")
+                    return label_names
+        
+        # Strategy 2: Extract unique labels from the dataset and generate names
+        print("[DEBUG] Attempting to extract labels from dataset samples...")
+        unique_labels = set()
+        max_samples_to_check = min(1000, len(hf_split))  # Limit to avoid excessive processing
+        
+        for i in range(max_samples_to_check):
+            sample = hf_split[i]
+            label = self._extract_label_from_sample(sample)
+            if label is not None:
+                unique_labels.add(label)
+        
+        if unique_labels:
+            # Sort labels and generate names
+            sorted_labels = sorted(unique_labels)
+            label_names = [f"Class_{label}" for label in sorted_labels]
+            print(f"[DEBUG] Generated label names from {len(unique_labels)} unique labels: {label_names}")
+            return label_names
+        
+        # Strategy 3: Use generic names based on number of classes detected
+        print("[DEBUG] Falling back to generic label names...")
+        # Try to determine number of classes from the first few samples
+        labels_found = []
+        for i in range(min(100, len(hf_split))):
+            sample = hf_split[i]
+            label = self._extract_label_from_sample(sample)
+            if label is not None and label not in labels_found:
+                labels_found.append(label)
+        
+        if labels_found:
+            num_classes = len(labels_found)
+            label_names = [f"Class_{i}" for i in range(num_classes)]
+            print(f"[DEBUG] Generated generic label names for {num_classes} classes")
+            return label_names
+        
+        print("[DEBUG] Could not determine label names, using default numbering")
+        return None
+    
+    def _extract_label_from_sample(self, sample):
+        """Extract label value from a sample using multiple key patterns"""
+        # Comprehensive list of possible label key patterns
+        label_keys_to_check = [
+            "label", "labels", "class", "category", "target",
+            "disease_label", "plant_disease", "disease", "illness",
+            "annotation", "y", "target_value", "ground_truth"
+        ]
+        
+        # Also check for keys that contain these words as substrings
+        available_keys = list(sample.keys())
+        for key in available_keys:
+            key_lower = key.lower()
+            if any(pattern in key_lower for pattern in ["label", "class", "category", "target", "disease", "annotation"]):
+                label_keys_to_check.append(key)
+        
+        # Remove duplicates while preserving order
+        label_keys_to_check = list(dict.fromkeys(label_keys_to_check))
+        
+        for key in label_keys_to_check:
+            if key in sample:
+                try:
+                    return int(sample[key])
+                except (ValueError, TypeError):
+                    # If not integer, try to handle string labels
+                    if isinstance(sample[key], str):
+                        return hash(sample[key]) % 1000  # Simple hash for string labels
+                    continue
+        
+        return None
         
     def __len__(self):
         return len(self.hf_split)
@@ -72,12 +163,13 @@ class HFDataset:
         if not isinstance(img, Image.Image):
             img = Image.fromarray(np.array(img))
         x = self.transform(img)
-        if "label" in sample:
-            y = sample["label"]
-        elif "labels" in sample:
-            y = sample["labels"]
-        else:
-            raise KeyError("Sample does not contain 'label' or 'labels' key.")
+        
+        # Robust label extraction with better error handling
+        y = self._extract_label_from_sample(sample)
+        if y is None:
+            available_keys = list(sample.keys())
+            raise KeyError(f"Sample {idx} does not contain valid label key. Available keys: {available_keys}")
+        
         return x, int(y)
 
 def load_model(model_path: str, config_path: str = "configs/train.yaml") -> torch.nn.Module:
@@ -93,12 +185,22 @@ def load_model(model_path: str, config_path: str = "configs/train.yaml") -> torc
     full = ds[split_name]
     labels = []
     for i, item in enumerate(full):
-        if "label" in item:
-            labels.append(int(item["label"]))
-        elif "labels" in item:
-            labels.append(int(item["labels"]))
-        else:
-            raise KeyError(f"Item {i} does not contain 'label' or 'labels' key. Available keys: {list(item.keys())}")
+        label_value = None
+        label_keys_to_check = ["label", "labels", "class", "category", "target"]
+        
+        for key in label_keys_to_check:
+            if key in item:
+                try:
+                    label_value = int(item[key])
+                    break
+                except (ValueError, TypeError):
+                    continue
+        
+        if label_value is None:
+            available_keys = list(item.keys())
+            raise KeyError(f"Item {i} does not contain valid label key. Available keys: {available_keys}")
+        
+        labels.append(label_value)
     num_classes = len(set(labels))
     print(f"[DEBUG] Detected {num_classes} classes from dataset")
     
@@ -253,12 +355,22 @@ def main():
     print(f"Overall Accuracy: {results['overall_accuracy']:.4f}")
     print(f"Top-5 Accuracy: {results['top5_accuracy']:.4f}")
     print(f"\nPer-class metrics:")
-    for i, (p, r, f, s) in enumerate(zip(results['per_class_precision'],
-                                        results['per_class_recall'],
-                                        results['per_class_fscore'],
-                                        results['per_class_support'])):
-        class_name = results['label_names'][i] if results['label_names'] else f"Class {i}"
-        print(f"{class_name}: Precision={p:.3f}, Recall={r:.3f}, F1={f:.3f}, Support={s}")
+    if results['label_names'] and len(results['label_names']) == len(results['per_class_precision']):
+        for i, (p, r, f, s) in enumerate(zip(results['per_class_precision'],
+                                            results['per_class_recall'],
+                                            results['per_class_fscore'],
+                                            results['per_class_support'])):
+            class_name = results['label_names'][i]
+            print(f"{class_name}: Precision={p:.3f}, Recall={r:.3f}, F1={f:.3f}, Support={s}")
+    else:
+        # Fallback if label names don't match class count
+        print(f"[WARNING] Label names ({len(results['label_names'])} names) don't match class count ({len(results['per_class_precision'])} classes)")
+        for i, (p, r, f, s) in enumerate(zip(results['per_class_precision'],
+                                            results['per_class_recall'],
+                                            results['per_class_fscore'],
+                                            results['per_class_support'])):
+            class_name = f"Class_{i}"
+            print(f"{class_name}: Precision={p:.3f}, Recall={r:.3f}, F1={f:.3f}, Support={s}")
     
     # Generate confusion matrix
     print("[Evaluation] Generating confusion matrix...")
