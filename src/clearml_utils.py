@@ -30,3 +30,13 @@ def upload_model(task, local_path: str, name: str = "best.pt"):
         task.update_output_model(model_path=local_path, name=name, auto_delete_file=False)
     except Exception as e:
         print(f"[ClearML] upload_model error: {e}")
+
+def log_image(task, title: str, image_path: str):
+    """Log an image to ClearML"""
+    if task is None:
+        return
+    try:
+        from clearml import Logger
+        task.get_logger().report_image(title=title, series=title, local_path=image_path)
+    except Exception as e:
+        print(f"[ClearML] log_image error for '{title}' at '{image_path}': {e}")
