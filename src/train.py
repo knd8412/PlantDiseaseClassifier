@@ -13,9 +13,18 @@ import yaml
 from datasets import load_dataset
 from PIL import Image
 
-from data.transforms import get_transforms
-from models.convnet_scratch import build_model
-from clearml_utils import init_task, log_scalar, upload_model
+try:
+    from .data.transforms import get_transforms
+    from .models.convnet_scratch import build_model
+except ImportError:
+    # Fallback for direct script execution
+    from src.data.transforms import get_transforms
+    from src.models.convnet_scratch import build_model
+try:
+    from .clearml_utils import init_task, log_scalar, upload_model
+except ImportError:
+    # Fallback for direct script execution
+    from src.clearml_utils import init_task, log_scalar, upload_model
 
 @dataclass
 class Config:
