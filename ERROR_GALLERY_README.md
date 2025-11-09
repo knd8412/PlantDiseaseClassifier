@@ -1,7 +1,16 @@
 # Error Gallery Implementation
 
 ## Overview
-The error gallery functionality has been successfully implemented in [`src/evaluate.py`](src/evaluate.py:1) as specified in the 72_hours.md requirements. This feature automatically generates visual grids of misclassified samples and provides analysis of the worst confusion patterns in the model.
+The error gallery functionality has been **fully integrated into the main evaluation script** [`src/evaluate.py`](src/evaluate.py:1) as specified in the 72_hours.md requirements. This feature automatically generates visual grids of misclassified samples and provides analysis of the worst confusion patterns in the model.
+
+## Key Integration Points
+
+- **Seamless Integration**: Error gallery generation is now part of the standard evaluation workflow
+- **Automatic Execution**: Runs automatically when you execute `python evaluate.py --model outputs/best.pt --split val`
+- **Optional Control**: Can be disabled with `--no-error-gallery` flag if needed
+- **ClearML Integration**: Error gallery artifacts are automatically logged to ClearML
+
+The error gallery is no longer a separate tool but an integral part of the model evaluation process.
 
 ## Features
 
@@ -11,9 +20,10 @@ The error gallery functionality has been successfully implemented in [`src/evalu
 - **Metadata Storage**: Saves sample indices and confusion statistics for further analysis
 
 ### 2. Comprehensive Error Analysis
-- **Markdown Report**: Generates `error_analysis.md` with pattern observations and recommendations
+- **Markdown Report**: Generates `error_analysis.md` with **checklist placeholders** for manual pattern observation completion
 - **Confusion Statistics**: Provides detailed counts and patterns for each confusion pair
 - **Actionable Insights**: Includes recommendations for model improvement
+- **Manual Workflow**: Designed for human analysis of visual error gallery images
 
 ### 3. ClearML Integration
 - **Image Logging**: Error gallery images are automatically logged to ClearML
@@ -74,10 +84,24 @@ errors/
 ```
 
 ### [`error_analysis.md`](src/evaluate.py:453)
-- Overview of evaluation metrics
-- Detailed analysis of worst confusion pairs
-- Pattern observations and recommendations
-- Actionable insights for model improvement
+- **Automated Framework**: Overview of evaluation metrics and confusion statistics
+- **Manual Pattern Analysis**: Checklist placeholders for human observation completion
+- **Pattern Observations**: Designed for manual completion after visual inspection
+- **Actionable Insights**: Includes recommendations for model improvement
+
+**Example Pattern Section:**
+```markdown
+#### Pattern Observations
+- [ ] Visual similarities between classes
+- [ ] Common misclassification patterns
+- [ ] Potential data quality issues
+- [ ] Model confusion patterns
+```
+
+**Workflow:**
+1. Run evaluation script to generate error gallery
+2. Examine image grids visually
+3. Manually fill in observed patterns in the markdown report
 
 ### [`gallery_config.json`](src/evaluate.py:447)
 ```json
@@ -146,11 +170,41 @@ Error gallery images are automatically logged to ClearML with the following stru
 - `error_gallery/confusion_pair_X_Y/grid.png` for each confusion pair
 - `error_analysis.md` uploaded as an artifact
 
+## Manual Analysis Workflow
+
+The error analysis report is designed for **manual completion** after visual inspection:
+
+### Step 1: Generate Error Gallery
+```bash
+python evaluate.py --model outputs/best.pt --split val
+```
+
+### Step 2: Examine Image Grids
+- Open `errors/confusion_pair_X_Y/grid.png` files
+- Visually inspect misclassified samples
+- Identify patterns and similarities
+
+### Step 3: Complete Markdown Report
+- Edit `errors/error_analysis.md`
+- Fill in checklist items based on observations:
+```markdown
+#### Pattern Observations
+- [x] Visual similarities between Healthy and Powdery_Mildew leaves
+- [x] Common lighting conditions causing confusion
+- [ ] Potential data quality issues
+- [x] Model struggles with early-stage disease detection
+```
+
+### Step 4: Document Insights
+- Add specific pattern descriptions
+- Note any data quality issues observed
+- Document model limitations discovered
+
 ## Done Check Validation
 
 The implementation satisfies the 72_hours.md requirement:
 - ✅ `errors/` folder created with image grids
-- ✅ Short markdown note with pattern observations
+- ✅ Short markdown note with **checklist placeholders** for manual pattern observation completion
 - ✅ ClearML integration for error gallery artifacts
 - ✅ Command `python evaluate.py --model best.pt --split val` works as specified
 
