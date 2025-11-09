@@ -2,10 +2,16 @@
 Comprehensive evaluation script for PlantDiseaseClassifier
 
 Calculates overall accuracy, top-five accuracy, per-class precision and recall,
-and generates a confusion matrix visualization.
+generates a confusion matrix visualization, and creates an error gallery with
+misclassified samples for analysis.
 
 Usage:
     python evaluate.py --model outputs/best.pt --split val
+    
+Error Gallery Options:
+    --error-gallery              Generate error gallery (default: True)
+    --gallery-top-pairs N        Number of worst confusion pairs to analyze (default: 5)
+    --gallery-samples-per-pair N Number of misclassified samples per pair (default: 10)
 """
 
 import argparse
@@ -22,6 +28,8 @@ import seaborn as sns
 from datasets import load_dataset
 from PIL import Image
 import yaml
+import shutil
+from pathlib import Path
 
 # Import from relative modules when running as script
 try:
@@ -278,7 +286,10 @@ def evaluate_model(model: torch.nn.Module, loader: DataLoader, device: torch.dev
         "per_class_fscore": fscore,
         "per_class_support": support,
         "confusion_matrix": cm,
-        "label_names": label_names
+        "label_names": label_names,
+        "predictions": preds,
+        "targets": targets,
+        "logits": logits
     }
 
 def plot_confusion_matrix(cm: np.ndarray, class_names: List[str] = None, save_path: str = "confusion_matrix.png"):
@@ -295,12 +306,206 @@ def plot_confusion_matrix(cm: np.ndarray, class_names: List[str] = None, save_pa
     plt.savefig(save_path)
     plt.close()
 
+def identify_worst_confusion_pairs(cm: np.ndarray, top_pairs: int = 5) -> List[Tuple[int, int, int]]:
+    """Identify the worst confusion pairs from confusion matrix"""
+    confusion_pairs = []
+    num_classes = cm.shape[0]
+    
+    # Find off-diagonal entries with highest confusion counts
+    for i in range(num_classes):
+        for j in range(num_classes):
+            if i != j:  # Only consider off-diagonal (misclassifications)
+                confusion_count = cm[i, j]
+                confusion_pairs.append((i, j, confusion_count))
+    
+    # Sort by confusion count (highest first)
+    confusion_pairs.sort(key=lambda x: x[2], reverse=True)
+    
+    # Return top pairs
+    return confusion_pairs[:top_pairs]
+
+def collect_misclassified_samples(predictions: np.ndarray, targets: np.ndarray,
+                                 true_class: int, predicted_class: int,
+                                 max_samples: int = 10) -> List[int]:
+    """Collect indices of misclassified samples for a specific confusion pair"""
+    misclassified_indices = []
+    
+    for idx, (pred, target) in enumerate(zip(predictions, targets)):
+        if target == true_class and pred == predicted_class:
+            misclassified_indices.append(idx)
+    
+    # Limit to max_samples
+    return misclassified_indices[:max_samples]
+
+def plot_confusion_grid(hf_split, misclassified_indices: List[int],
+                       true_class: int, predicted_class: int,
+                       label_names: List[str], save_path: str,
+                       grid_size: tuple = (5, 2)):
+    """Generate image grid for misclassified samples"""
+    num_samples = len(misclassified_indices)
+    if num_samples == 0:
+        print(f"[WARNING] No misclassified samples found for true_class={true_class}, predicted_class={predicted_class}")
+        return
+    
+    fig, axes = plt.subplots(grid_size[0], grid_size[1], figsize=(12, 15))
+    fig.suptitle(f"Confusion: {label_names[true_class]} -> {label_names[predicted_class]}", fontsize=16)
+    
+    for i, idx in enumerate(misclassified_indices):
+        if i >= grid_size[0] * grid_size[1]:
+            break
+            
+        row = i // grid_size[1]
+        col = i % grid_size[1]
+        ax = axes[row, col]
+        
+        # Get original image from dataset
+        sample = hf_split[idx]
+        img = sample.get("image", None) or sample.get("img", None)
+        if not isinstance(img, Image.Image):
+            img = Image.fromarray(np.array(img))
+        
+        ax.imshow(img)
+        ax.set_title(f"Sample {idx}")
+        ax.axis('off')
+    
+    # Hide unused subplots
+    for i in range(len(misclassified_indices), grid_size[0] * grid_size[1]):
+        row = i // grid_size[1]
+        col = i % grid_size[1]
+        axes[row, col].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+def generate_error_gallery(results: Dict, hf_split, label_names: List[str],
+                         output_dir: str = "errors", top_pairs: int = 5,
+                         samples_per_pair: int = 10):
+    """Generate error gallery with misclassified samples"""
+    print("[Error Gallery] Generating error gallery...")
+    
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Get confusion matrix and predictions
+    cm = results["confusion_matrix"]
+    predictions = results["predictions"]
+    targets = results["targets"]
+    
+    # Identify worst confusion pairs
+    confusion_pairs = identify_worst_confusion_pairs(cm, top_pairs)
+    
+    if not confusion_pairs:
+        print("[Error Gallery] No confusion pairs found")
+        return
+    
+    # Generate gallery for each confusion pair
+    gallery_config = {
+        "top_pairs": top_pairs,
+        "samples_per_pair": samples_per_pair,
+        "confusion_pairs": []
+    }
+    
+    for pair_idx, (true_class, predicted_class, count) in enumerate(confusion_pairs):
+        print(f"[Error Gallery] Processing confusion pair {pair_idx}: {label_names[true_class]} -> {label_names[predicted_class]} (count: {count})")
+        
+        # Create subdirectory for this confusion pair
+        pair_dir = output_path / f"confusion_pair_{true_class}_{predicted_class}"
+        pair_dir.mkdir(exist_ok=True)
+        
+        # Collect misclassified samples
+        misclassified_indices = collect_misclassified_samples(
+            predictions, targets, true_class, predicted_class, samples_per_pair
+        )
+        
+        if misclassified_indices:
+            # Generate image grid
+            grid_path = pair_dir / "grid.png"
+            plot_confusion_grid(hf_split, misclassified_indices, true_class, predicted_class,
+                              label_names, str(grid_path))
+            
+            # Save sample metadata
+            samples_metadata = {
+                "true_class": true_class,
+                "predicted_class": predicted_class,
+                "true_class_name": label_names[true_class],
+                "predicted_class_name": label_names[predicted_class],
+                "confusion_count": count,
+                "misclassified_indices": misclassified_indices
+            }
+            
+            with open(pair_dir / "samples.json", "w") as f:
+                json.dump(samples_metadata, f, indent=2)
+            
+            # Add to gallery config
+            gallery_config["confusion_pairs"].append({
+                "true_class": true_class,
+                "predicted_class": predicted_class,
+                "true_class_name": label_names[true_class],
+                "predicted_class_name": label_names[predicted_class],
+                "confusion_count": count,
+                "num_samples_collected": len(misclassified_indices)
+            })
+        else:
+            print(f"[WARNING] No misclassified samples found for {label_names[true_class]} → {label_names[predicted_class]}")
+    
+    # Save gallery configuration
+    with open(output_path / "gallery_config.json", "w") as f:
+        json.dump(gallery_config, f, indent=2)
+    
+    print(f"[Error Gallery] Error gallery generated in {output_dir}")
+
+def save_error_analysis(results: Dict, output_dir: str = "errors"):
+    """Generate markdown analysis of error patterns"""
+    analysis_path = Path(output_dir) / "error_analysis.md"
+    
+    cm = results["confusion_matrix"]
+    label_names = results["label_names"]
+    
+    with open(analysis_path, "w") as f:
+        f.write("# Error Analysis Report\n\n")
+        f.write("## Overview\n\n")
+        f.write(f"- Overall Accuracy: {results['overall_accuracy']:.4f}\n")
+        f.write(f"- Top-5 Accuracy: {results['top5_accuracy']:.4f}\n")
+        f.write(f"- Number of Classes: {len(label_names)}\n\n")
+        
+        f.write("## Worst Confusion Pairs\n\n")
+        
+        # Identify top confusion pairs
+        confusion_pairs = identify_worst_confusion_pairs(cm, 10)  # Get top 10 for analysis
+        
+        for i, (true_class, predicted_class, count) in enumerate(confusion_pairs):
+            if count > 0:
+                f.write(f"### {i+1}. {label_names[true_class]} -> {label_names[predicted_class]} (Count: {count})\n\n")
+                f.write(f"- **True Class**: {label_names[true_class]}\n")
+                f.write(f"- **Predicted Class**: {label_names[predicted_class]}\n")
+                f.write(f"- **Confusion Count**: {count}\n\n")
+                
+                # Add pattern observations placeholder
+                f.write("#### Pattern Observations\n\n")
+                f.write("- [ ] Visual similarities between classes\n")
+                f.write("- [ ] Common misclassification patterns\n")
+                f.write("- [ ] Potential data quality issues\n")
+                f.write("- [ ] Model confusion patterns\n\n")
+        
+        f.write("## Recommendations\n\n")
+        f.write("- Consider data augmentation for frequently confused classes\n")
+        f.write("- Review class balance and dataset quality\n")
+        f.write("- Evaluate model architecture for class discrimination\n")
+        f.write("- Consider transfer learning or fine-tuning approaches\n")
+    
+    print(f"[Error Analysis] Analysis saved to {analysis_path}")
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate PlantDiseaseClassifier model")
     parser.add_argument("--model", required=True, help="Path to model checkpoint (contains model_state)")
     parser.add_argument("--config", default="configs/train.yaml", help="Path to train config yaml")
     parser.add_argument("--split", default="val", help="Dataset split to evaluate (e.g., val, test)")
     parser.add_argument("--output", default="outputs/eval_results.json", help="Path to save evaluation results")
+    parser.add_argument("--error-gallery", action="store_true", default=True, help="Generate error gallery with misclassified samples")
+    parser.add_argument("--gallery-top-pairs", type=int, default=5, help="Number of worst confusion pairs to analyze")
+    parser.add_argument("--gallery-samples-per-pair", type=int, default=10, help="Number of misclassified samples per confusion pair")
     args = parser.parse_args()
 
     # Load config
@@ -395,6 +600,21 @@ def main():
         }
         json.dump(json_results, f, indent=2)
     
+    # Generate error gallery if requested
+    if args.error_gallery:
+        print("[Evaluation] Generating error gallery...")
+        generate_error_gallery(
+            results=results,
+            hf_split=eval_split,
+            label_names=results["label_names"],
+            output_dir="errors",
+            top_pairs=args.gallery_top_pairs,
+            samples_per_pair=args.gallery_samples_per_pair
+        )
+        
+        # Generate error analysis markdown
+        save_error_analysis(results, output_dir="errors")
+    
     # ClearML integration
     task = init_task(
         enabled=cfg_dict.get("clearml", {}).get("enabled", False),
@@ -408,6 +628,22 @@ def main():
         log_scalar(task, "accuracy", "overall", results["overall_accuracy"], 0)
         log_scalar(task, "accuracy", "top5", results["top5_accuracy"], 0)
         log_image(task, "confusion_matrix", "confusion_matrix.png")
+        
+        # Log error gallery images to ClearML
+        if args.error_gallery:
+            errors_dir = Path("errors")
+            if errors_dir.exists():
+                for pair_dir in errors_dir.iterdir():
+                    if pair_dir.is_dir() and pair_dir.name.startswith("confusion_pair_"):
+                        grid_path = pair_dir / "grid.png"
+                        if grid_path.exists():
+                            log_image(task, f"error_gallery/{pair_dir.name}", str(grid_path))
+                
+                # Log error analysis markdown
+                analysis_path = errors_dir / "error_analysis.md"
+                if analysis_path.exists():
+                    task.upload_artifact(name="error_analysis", artifact_object=str(analysis_path))
+        
         print("[Evaluation] Results logged to ClearML")
     
     print("[Evaluation] Evaluation completed successfully!")
