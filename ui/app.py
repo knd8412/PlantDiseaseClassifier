@@ -1,3 +1,6 @@
+import time
+from pathlib import Path
+
 import gradio as gr
 import torch
 from PIL import Image
@@ -71,7 +74,25 @@ transform = transforms.Compose(
 CUSTOM_CSS = """
 
 :root {
-    color-scheme: dark;
+    color-scheme: light dark;
+    --page-bg: #020617;
+    --page-text: #e5e7eb;
+    --card-bg: rgba(15, 23, 42, 0.92);
+    --card-border: rgba(148, 163, 184, 0.5);
+    --muted-text: #9ca3af;
+
+}
+
+@media (prefers-color-scheme: light){
+
+    :root {
+        --page-bg: #f3f4f6;
+        --page-text: #020617;
+        --card-bg: #ffffff;
+        --card-border: rgba(209, 213, 219, 1);
+        --muted-text: #6b7280;
+    }
+
 }
 
 .gradio-container {
@@ -81,9 +102,9 @@ CUSTOM_CSS = """
         radial-gradient(circle at 0% 0%, #22c55e33 0, transparent 45%),
         radial-gradient(circle at 100% 100%, #0ea5e933 0, transparent 55%),
         radial-gradient(circle at 50% 10%, #910ee955 0, transparent 45%),
-        #020617;
-    color: #e5e7eb;
-    font-family: system-ui;
+        #020617 !important;
+
+    font-family: Arial, system-ui;
 }
 
 #app-title {
@@ -91,20 +112,21 @@ CUSTOM_CSS = """
     font-size: 2rem;
     font-weight: 100;
     margin: 0 0 0.4rem;
+    color: white !important;
 }
 
 #app-subtitle {
     text-align: center;
-    color: #9ca3af;
     margin-bottom: 1.75rem;
     font-size: 25px;
-    font-family: system-ui;
+    font-family: Arial;
+    color: white !important;
 }
 
 .card {
-    background: rgba(15, 23, 42, 0.92);
+    background: var(--card-bg);
     border-radius: 18px;
-    border: 1px solid rgba(148, 163, 184, 0.5);
+    border: 1px solid var(--card-border);
     box-shadow: 0 16px 35px rgba(15, 23, 42, 0.9);
     padding: 1.2rem 1.3rem;
 }
@@ -141,14 +163,17 @@ CUSTOM_CSS = """
 #prediction_label {
     border-radius: 14px;
     padding: 0.9rem 1rem;
-    background-color: #020617;
+    background-color: transparent;
 }
 
 #footer-note {
-    font-size: 0.85rem;
+    font-size: 18px;
     margin-top: 0.75rem;
+    color: white !important;
 }
 """
+
+flagged = []
 
 
 def predict(image):
@@ -177,6 +202,44 @@ def predict(image):
     return result
 
 
+def predict_batch(files):
+
+    if not files:
+        return []
+
+    rows = []
+    for f in files:
+        try:
+            img = Image.open(f).convert("RGB")
+        except Exception:
+            continue
+
+        scores = predict(img)
+        if not scores:
+            continue
+
+        top_class = max(scores, key=scores.get)
+        top_prob = scores[top_class]
+        rows.append([Path(f).name, top_class, round(float(top_prob), 4)])
+
+    return rows
+
+
+def flag_prediction(image, scores):
+    if image is None or not scores:
+        return ("No prediction available to flag yet.", flagged)
+
+    top_class = max(scores, key=scores.get)
+    top_prob = scores[top_class]
+
+    flagged.append(
+        [time.strftime("%Y-%M-%D %H:%M:%S"), top_class, round(float(top_prob), 4)]
+    )
+    msg = f"Flagged prediction {top_class}: (p={top_prob:.3f})"
+
+    return msg, flagged
+
+
 # interface = gr.Interface(
 #     fn=predict,
 #     inputs=gr.Image(type="pil",label="Upload a leaf image",image_mode="RGB"),
@@ -190,7 +253,11 @@ with gr.Blocks(css=CUSTOM_CSS, theme=gr.themes.Soft()) as demo:
     gr.HTML("<h1 id='app-title'> Plant Disease Classifier</h1>")
     gr.HTML(
         "<p id='app-subtitle'>Upload a leaf image. The model resizes it to 256x256 "
-        "and returns the <strong>top 5 disease probabilities</strong>.</p>"
+        "and returns the top 5 disease probabilities.</p>"
+    )
+
+    gr.Markdown(
+        "1. Upload or drag/drop a clear image of a single leaf. \n 2. Click Analyse Leaf. \n 3. Inspect the top 5 predicted diseases and probabilities."
     )
 
     with gr.Row():
@@ -206,12 +273,10 @@ with gr.Blocks(css=CUSTOM_CSS, theme=gr.themes.Soft()) as demo:
             )
         with gr.Column(scale=2, elem_classes=["card"]):
             output_label = gr.Label(
-                num_top_classes=5,
-                label=f"Predicted diseases (top {5})",
-                elem_id="prediction_label",
+                num_top_classes=5, label=f"Predicted diseases (top {5})"
             )
             gr.HTML(
-                " <p id='footer-note'> Tip: crop the photo so it focuses on a **single leaf** for best results. </p>"
+                " <p id='footer-note'> Tip: crop the photo so it focuses on a single leaf for best results. </p>"
             )
 
     predict_btn.click(fn=predict, inputs=image_input, outputs=output_label)

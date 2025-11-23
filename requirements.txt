@@ -4,3 +4,9 @@ clearml
 gradio
 matplotlib
 numpy
+datasets
+scikit-learn
+pytest
+pre-commit
+black
+isort
