@@ -6,6 +6,8 @@ device: "cuda"
 
 data:
   dataset_name: "DScomp380/plant_village"
+  data_dir: "/kaggle/input/plantvillage-dataset"  # Change to your path
+  modalities: ["color", "grayscale", "segmented"]
   image_size: 256
   subset_fraction: 0.25
   val_size: 0.15
@@ -13,6 +15,13 @@ data:
   num_workers: 4
   normalize: true
   augment: false
+  
+  # Class imbalance handling
+  balance_strategy: null  # Options: null, "uniform", "weighted_sampler", "weighted_loss"
+  # - null: no balancing
+  # - "uniform": downsample all classes to smallest class size
+  # - "weighted_sampler": use WeightedRandomSampler during training
+  # - "weighted_loss": use class weights in loss function
 
 
 model:

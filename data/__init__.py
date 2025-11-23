@@ -8,7 +8,11 @@ from .utils import (
     build_class_mapping,
     gather_samples,
     split_dataset,
-    make_subset
+    make_subset,
+    get_class_distribution,
+    balance_dataset_uniform,
+    calculate_class_weights,
+    get_sample_weights
 )
 
 __all__ = [
@@ -18,5 +22,9 @@ __all__ = [
     'build_class_mapping',
     'gather_samples',
     'split_dataset',
-    'make_subset'
+    'make_subset',
+    'get_class_distribution',
+    'balance_dataset_uniform',
+    'calculate_class_weights',
+    'get_sample_weights'
 ]
