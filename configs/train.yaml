@@ -2,7 +2,7 @@ seed: 42
 project_name: "PlantVillage-Baseline"
 task_name: "scratch-cnn-baseline"
 tags: ["baseline", "scratch", "subset25"]
-device: "cuda" 
+device: "cuda"
 
 data:
   dataset_name: "DScomp380/plant_village"
@@ -14,19 +14,25 @@ data:
   normalize: true
   augment: false
 
-
 model:
-  channels: [32, 64, 128]  # conv blocks widths
-  dropout: 0.2
-  use_batchnorm: true
+  num_classes: 39
+  channels: [32, 64, 128]    # conv blocks widths
+  regularisation: "none"      # "none" | "dropout" | "batchnorm"
+  dropout: 0.2                # used when regularisation == "dropout"
 
 train:
   epochs: 30
   batch_size: 64
   optimizer: "adamw"
-  lr: 0.001         
+  lr: 0.001
   weight_decay: 0.0001
-  patience: 3        # early stopping patience
+
+  patience: 3                 # early stopping patience
+  min_delta: 0.0              # minimum improvement in val metric to reset patience
+
+  scheduler:
+    type: "cosine"            # cosine annealing LR schedule
+    T_max: 30                 # usually = epochs
 
 clearml:
   enabled: true

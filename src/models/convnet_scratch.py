@@ -3,8 +3,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class ConvBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, use_bn=True, dropout=0.0):
+    def __init__(self, in_ch, out_ch, use_bn: bool = True, dropout: float = 0.0):
+        """
+        A basic block: Conv -> (BN) -> ReLU -> Conv -> (BN) -> ReLU -> MaxPool -> (Dropout2d)
+        """
         super().__init__()
         convs = []
         # first conv
@@ -30,7 +34,14 @@ class ConvBlock(nn.Module):
 
 
 class SmallCNN(nn.Module):
-    def __init__(self, in_channels: int, num_classes: int, channels: List[int], use_bn=True, dropout=0.0):
+    def __init__(
+        self,
+        in_channels: int,
+        num_classes: int,
+        channels: List[int],
+        use_bn: bool = True,
+        dropout: float = 0.0,
+    ):
         super().__init__()
         c = in_channels
         blocks = []
@@ -39,9 +50,9 @@ class SmallCNN(nn.Module):
             c = ch
         self.backbone = nn.Sequential(*blocks)
         self.head = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1,1)),
+            nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(c, num_classes)
+            nn.Linear(c, num_classes),
         )
 
     def forward(self, x):
@@ -49,7 +60,45 @@ class SmallCNN(nn.Module):
         x = self.head(x)
         return x
 
-def build_model(num_classes: int, channels: Optional[List[int]] = None, use_batchnorm=True, dropout=0.0):
+
+def build_model(
+    num_classes: int,
+    channels: Optional[List[int]] = None,
+    regularisation: str = "none",   # "none" | "dropout" | "batchnorm"
+    dropout: float = 0.3,
+):
+    """
+    Factory to build the SmallCNN with different regularisation modes.
+
+    regularisation:
+      - "none":       no BatchNorm, no dropout
+      - "dropout":    dropout in ConvBlocks, no BatchNorm
+      - "batchnorm":  BatchNorm in ConvBlocks, no dropout
+    """
     if channels is None:
         channels = [32, 64, 128]
-    return SmallCNN(in_channels=3, num_classes=num_classes, channels=channels, use_bn=use_batchnorm, dropout=dropout)
+
+    regularisation = regularisation.lower()
+
+    if regularisation == "none":
+        use_bn = False
+        block_dropout = 0.0
+    elif regularisation == "dropout":
+        use_bn = False
+        block_dropout = dropout
+    elif regularisation == "batchnorm":
+        use_bn = True
+        block_dropout = 0.0
+    else:
+        raise ValueError(
+            f"Unknown regularisation mode '{regularisation}'. "
+            "Use one of: 'none', 'dropout', 'batchnorm'."
+        )
+
+    return SmallCNN(
+        in_channels=3,
+        num_classes=num_classes,
+        channels=channels,
+        use_bn=use_bn,
+        dropout=block_dropout,
+    )
