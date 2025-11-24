@@ -22,6 +22,15 @@ from .visualization import (
     compare_augmentations,
     visualize_sample_images
 )
+from .strategies import (
+    get_strategy,
+    apply_imbalance_strategy,
+    NoBalancingStrategy,
+    UniformSamplingStrategy,
+    WeightedSamplerStrategy,
+    WeightedLossStrategy,
+    HybridStrategy
+)
 
 __all__ = [
     # Dataset & DataLoaders
