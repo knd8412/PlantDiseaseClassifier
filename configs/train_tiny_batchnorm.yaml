@@ -39,3 +39,4 @@ clearml:
   project: "KCL-PlantVillage"
   task_name: "convnet_bn_tiny"
   output_uri: null
+  queue: "default"

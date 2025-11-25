@@ -39,3 +39,4 @@ clearml:
   project: "KCL-PlantVillage"
   task_name: "baseline-scratch"
   output_uri: null
+  queue: "default"

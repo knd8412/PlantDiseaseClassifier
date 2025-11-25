@@ -240,7 +240,7 @@ def main():
         scheduler = CosineAnnealingLR(optimizer, T_max=T_max)
         print(f"[Scheduler] Using CosineAnnealingLR with T_max={T_max}")
 
-    # ClearML
+        # ClearML
     task = init_task(
         enabled=cfg.clearml["enabled"],
         project=cfg.clearml.get("project") or cfg.project_name,
@@ -249,11 +249,24 @@ def main():
         params=cfg_dict,
     )
 
+    # If configured, send this task to a remote ClearML queue and stop local execution
+    remote_queue = cfg.clearml.get("queue")
+    if task is not None and remote_queue:
+        try:
+            from clearml import Task as ClearMLTask
+            # Only enqueue if we are running locally; on the agent this is a no-op
+            if ClearMLTask.running_locally():
+                print(f"[ClearML] Executing remotely on queue '{remote_queue}'")
+                task.execute_remotely(queue_name=remote_queue, exit_process=True)
+        except Exception as e:
+            print(f"[ClearML] execute_remotely failed ({e}), continuing locally.")
+
     # Early stopping
     early_stopper = EarlyStopping(
         patience=cfg.train.get("patience", 3),
         min_delta=cfg.train.get("min_delta", 0.0),
     )
+
 
     # Training with early stopping on val accuracy
     best_val_acc = 0.0

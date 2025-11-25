@@ -39,3 +39,4 @@ clearml:
   project: "KCL-PlantVillage"
   task_name: "convnet_dropout_intermediate"
   output_uri: null
+  queue: "default"
