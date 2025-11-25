@@ -3,11 +3,59 @@ Utility functions for dataset handling, splitting, and subset creation.
 """
 
 import os
+import zipfile
 from glob import glob
 from collections import Counter
 import numpy as np
 import torch
 from sklearn.model_selection import train_test_split
+
+
+def ensure_dataset_extracted(path):
+    """
+    Ensures that if the path points to a zip file or a directory containing a zip file,
+    it is extracted. Returns the path to the directory containing the actual data.
+    """
+    target_path = path
+
+    # Case 1: path is a zip file
+    if os.path.isfile(path) and path.lower().endswith('.zip'):
+        extract_dir = os.path.splitext(path)[0]
+        if not os.path.exists(extract_dir):
+            print(f"Extracting {path}...")
+            with zipfile.ZipFile(path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+        target_path = extract_dir
+
+    # Case 2: path is a directory that might contain a zip
+    elif os.path.isdir(path):
+        # Check if it already looks like a dataset (has 'color' folder)
+        if os.path.exists(os.path.join(path, 'color')):
+            return path
+
+        # Look for zip files
+        files = os.listdir(path)
+        zip_files = [f for f in files if f.lower().endswith('.zip')]
+        
+        if zip_files:
+            zip_file = zip_files[0]
+            zip_path = os.path.join(path, zip_file)
+            # Extract to a folder named after the zip
+            extract_dir = os.path.join(path, os.path.splitext(zip_file)[0])
+            
+            if not os.path.exists(extract_dir):
+                print(f"Extracting {zip_path}...")
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+            target_path = extract_dir
+
+    # After extraction, check if the data is nested (e.g. extracted_folder/dataset_name/color)
+    # We look for the 'color' folder
+    for root, dirs, files in os.walk(target_path):
+        if 'color' in dirs:
+            return root
+            
+    return target_path
 
 
 def build_class_mapping(data_dir, modality="color"):
