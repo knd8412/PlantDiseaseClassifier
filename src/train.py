@@ -244,7 +244,7 @@ def main():
             "medium": "ee3e7d7e511a47449f7206809eced7c1",   # ~30%
             "large":  "a20b80fd8e85450d9db29dc867a13c3e",   # ~60%
         }
-        subset_key = cfg.data.get("clearml_subset", "tiny")
+        subset_key = cfg.data.get("clearml_subset", "medium")
         dataset_id = DATASET_IDS[subset_key]
 
         print(f"[Data] Fetching ClearML Dataset '{subset_key}' ({dataset_id})")
