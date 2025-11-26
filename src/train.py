@@ -1,6 +1,6 @@
 import argparse, os, json, random
 from dataclasses import dataclass
-from typing import Tuple, List
+from typing import List
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 import torch
@@ -8,7 +8,6 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from tqdm import tqdm
 import yaml
 from datasets import load_dataset
 from PIL import Image
@@ -166,7 +165,7 @@ def main():
     data_source = cfg.data.get("source", "hf")
 
     if data_source == "hf":
-        # ===== OLD HF BEHAVIOUR (kept for reference, not used in coursework) =====
+        # ===== OLD HF BEHAVIOUR (legacy path) =====
         print("[Data] Loading HF dataset:", cfg.data["dataset_name"])
         ds = load_dataset(cfg.data["dataset_name"])
 
@@ -198,12 +197,16 @@ def main():
         val_hf = full.select(val_idx.tolist())
         test_hf = full.select(test_idx.tolist())
 
-        # Transforms
-        train_tf, eval_tf = get_transforms(
-            img_size=cfg.data["image_size"],
+        # Transforms – be robust to different return formats
+        tf_result = get_transforms(
+            cfg.data["image_size"],        # positional size
             normalize=cfg.data["normalize"],
             augment=cfg.data["augment"],
         )
+        if isinstance(tf_result, tuple):
+            train_tf, eval_tf = tf_result[0], tf_result[1]
+        else:
+            train_tf = eval_tf = tf_result
 
         train_ds = HFDataset(train_hf, transform=train_tf)
         val_ds = HFDataset(val_hf, transform=eval_tf)
@@ -230,9 +233,6 @@ def main():
             num_workers=cfg.data["num_workers"],
             pin_memory=True,
         )
-
-        # If you don't want anyone to use HF path, uncomment:
-        # raise NotImplementedError("HF path kept only for reference. Use data.source: 'clearml'.")
 
     else:
         # ===================== CLEARML DATASET PATH =====================
@@ -274,20 +274,26 @@ def main():
             f"Train={len(train_samples)}, Val={len(val_samples)}, Test={len(test_samples)}"
         )
 
-        # 4) Transforms & datasets
+        # 4) Transforms & datasets – robust to different return formats
         img_size = cfg.data["image_size"]
         normalize = cfg.data["normalize"]
         augment = cfg.data["augment"]
 
-        train_tf, eval_tf = get_transforms(
-            img_size=img_size,
+        tf_result = get_transforms(
+            img_size,        # positional size
             normalize=normalize,
             augment=augment,
         )
+        if isinstance(tf_result, tuple):
+            train_tf, eval_tf = tf_result[0], tf_result[1]
+        else:
+            train_tf = eval_tf = tf_result
 
-        train_ds = MultiModalityDataset(train_samples, transform=train_tf)
-        val_ds   = MultiModalityDataset(val_samples,   transform=eval_tf)
-        test_ds  = MultiModalityDataset(test_samples,  transform=eval_tf)
+        # ⚠️ IMPORTANT: pass transforms POSITIONALLY so we don't depend on the
+        # parameter name in MultiModalityDataset.__init__
+        train_ds = MultiModalityDataset(train_samples, train_tf)
+        val_ds   = MultiModalityDataset(val_samples,   eval_tf)
+        test_ds  = MultiModalityDataset(test_samples,  eval_tf)
 
         # 5) DataLoaders
         train_loader = DataLoader(

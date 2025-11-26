@@ -6,7 +6,7 @@ device: "cuda"
 
 data:
   source: "clearml"
-  clearml_subset: "medium"
+  clearml_subset: "tiny"
   dataset_name: "DScomp380/plant_village"
   data_dir: "/kaggle/input/plantvillage-dataset"  # Change to your path
   modalities: ["color", "grayscale", "segmented"]
