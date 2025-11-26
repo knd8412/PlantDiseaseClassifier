@@ -1,8 +1,12 @@
-import argparse, os, json, random
+import argparse
+import os
+import json
+import random
 from dataclasses import dataclass
 from typing import List
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
+
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
@@ -28,6 +32,9 @@ from data.utils import (
 )
 
 
+# ----------------------------------------------------------------------
+# Config dataclass
+# ----------------------------------------------------------------------
 @dataclass
 class Config:
     seed: int
@@ -41,6 +48,9 @@ class Config:
     clearml: dict
 
 
+# ----------------------------------------------------------------------
+# Early stopping
+# ----------------------------------------------------------------------
 class EarlyStopping:
     def __init__(self, patience: int = 3, min_delta: float = 0.0):
         self.patience = patience
@@ -61,6 +71,9 @@ class EarlyStopping:
             return self.counter >= self.patience
 
 
+# ----------------------------------------------------------------------
+# HF dataset wrapper (legacy path)
+# ----------------------------------------------------------------------
 class HFDataset(Dataset):
     def __init__(self, hf_split, transform):
         self.hf_split = hf_split
@@ -88,6 +101,9 @@ class HFDataset(Dataset):
         return x, int(y)
 
 
+# ----------------------------------------------------------------------
+# Utils
+# ----------------------------------------------------------------------
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -117,34 +133,33 @@ def accuracy(logits, targets):
 
 def _unpack_batch(batch, device):
     """
-    MultiModalityDataset may return (x, y) or (x, y, extra...).
-    We only care about the first two entries.
+    Handle MultiModalityDataset batches that might be:
+      (image, label) or (image, label, extra1, extra2, ...)
+    Only the first two entries are used for training.
     """
     if isinstance(batch, (list, tuple)):
         if len(batch) < 2:
-            raise ValueError(f"Unexpected batch with length {len(batch)}")
+            raise ValueError(f"Expected at least 2 elements in batch, got {len(batch)}")
         xb, yb = batch[0], batch[1]
     else:
-        # Fallback: assume standard (x, y)
-        xb, yb = batch
+        raise ValueError(f"Expected batch to be tuple/list, got {type(batch)}")
 
-    xb = xb.to(device)
-    yb = yb.to(device)
-    return xb, yb
+    return xb.to(device), yb.to(device)
 
 
+# ----------------------------------------------------------------------
+# Train / eval loops
+# ----------------------------------------------------------------------
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
     running_loss, running_acc, n = 0.0, 0.0, 0
     for batch in loader:
         xb, yb = _unpack_batch(batch, device)
-
         optimizer.zero_grad()
         logits = model(xb)
         loss = criterion(logits, yb)
         loss.backward()
         optimizer.step()
-
         running_loss += loss.item() * xb.size(0)
         running_acc += (logits.argmax(1) == yb).float().sum().item()
         n += xb.size(0)
@@ -157,7 +172,6 @@ def evaluate(model, loader, criterion, device):
     running_loss, running_acc, n = 0.0, 0.0, 0
     for batch in loader:
         xb, yb = _unpack_batch(batch, device)
-
         logits = model(xb)
         loss = criterion(logits, yb)
         running_loss += loss.item() * xb.size(0)
@@ -166,6 +180,9 @@ def evaluate(model, loader, criterion, device):
     return running_loss / n, running_acc / n
 
 
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/train.yaml")
@@ -186,8 +203,8 @@ def main():
     # ------------------------------------------------------------------
     data_source = cfg.data.get("source", "hf")
 
+    # ---------------- HF PATH (LEGACY / OPTIONAL) ----------------
     if data_source == "hf":
-        # ===== HF path (kept for reference, normally not used now) =====
         print("[Data] Loading HF dataset:", cfg.data["dataset_name"])
         ds = load_dataset(cfg.data["dataset_name"])
 
@@ -219,16 +236,17 @@ def main():
         val_hf = full.select(val_idx.tolist())
         test_hf = full.select(test_idx.tolist())
 
-        # Transforms
-        transforms = get_transforms(
+        # Transforms (note: get_transforms may return 2 or 3 items)
+        tfs = get_transforms(
             img_size=cfg.data["image_size"],
             normalize=cfg.data["normalize"],
             augment=cfg.data["augment"],
         )
+        train_tf, eval_tf = tfs[0], tfs[1]
 
-        train_ds = HFDataset(train_hf, transform=transforms["train"])
-        val_ds = HFDataset(val_hf, transform=transforms["eval"])
-        test_ds = HFDataset(test_hf, transform=transforms["eval"])
+        train_ds = HFDataset(train_hf, transform=train_tf)
+        val_ds = HFDataset(val_hf, transform=eval_tf)
+        test_ds = HFDataset(test_hf, transform=eval_tf)
 
         train_loader = DataLoader(
             train_ds,
@@ -252,15 +270,15 @@ def main():
             pin_memory=True,
         )
 
+    # ---------------- CLEARML PATH (COURSEWORK) ----------------
     else:
-        # ===================== CLEARML DATASET PATH =====================
         print("[Data] Using ClearML dataset pipeline")
 
         # 1) Choose which subset to use
         DATASET_IDS = {
-            "tiny":   "e1277db0a8a445d9b6faa1f3947c1fe0",   # ~5%
-            "medium": "ee3e7d7e511a47449f7206809eced7c1",   # ~30%
-            "large":  "a20b80fd8e85450d9db29dc867a13c3e",   # ~60%
+            "tiny": "e1277db0a8a445d9b6faa1f3947c1fe0",   # ~5%
+            "medium": "ee3e7d7e511a47449f7206809eced7c1",  # ~30%
+            "large": "a20b80fd8e85450d9db29dc867a13c3e",   # ~60%
         }
         subset_key = cfg.data.get("clearml_subset", "tiny")
         dataset_id = DATASET_IDS[subset_key]
@@ -270,6 +288,32 @@ def main():
         local_path = cl_dataset.get_local_copy()
         local_path = ensure_dataset_extracted(local_path)
         print(f"[Data] Local dataset path: {local_path}")
+
+        # ---- NEW BIT: handle nested dataset folder (e.g. plantvillage_medium) ----
+        color_dir = os.path.join(local_path, "color")
+        if not os.path.isdir(color_dir):
+            subdirs = [
+                d
+                for d in os.listdir(local_path)
+                if os.path.isdir(os.path.join(local_path, d))
+            ]
+            nested_root = None
+            for d in subdirs:
+                cand = os.path.join(local_path, d)
+                if os.path.isdir(os.path.join(cand, "color")):
+                    nested_root = cand
+                    break
+
+            if nested_root is not None:
+                local_path = nested_root
+                print(f"[Data] Detected nested dataset root, using: {local_path}")
+            else:
+                raise RuntimeError(
+                    f"[Data] Could not find 'color' directory under {local_path}. "
+                    f"Subdirs: {subdirs}"
+                )
+
+        print(f"[Data] Final dataset root: {local_path}")
 
         # 2) Build class mapping & sample list
         modalities = cfg.data.get("modalities", ["color"])
@@ -293,15 +337,20 @@ def main():
         )
 
         # 4) Transforms & datasets
-        transforms = get_transforms(
-            img_size=cfg.data["image_size"],
-            normalize=cfg.data["normalize"],
-            augment=cfg.data["augment"],
-        )
+        img_size = cfg.data["image_size"]
+        normalize = cfg.data["normalize"]
+        augment = cfg.data["augment"]
 
-        train_ds = MultiModalityDataset(train_samples, transforms=transforms)
-        val_ds   = MultiModalityDataset(val_samples,   transforms=transforms)
-        test_ds  = MultiModalityDataset(test_samples,  transforms=transforms)
+        tfs = get_transforms(
+            img_size=img_size,
+            normalize=normalize,
+            augment=augment,
+        )
+        train_tf, eval_tf = tfs[0], tfs[1]
+
+        train_ds = MultiModalityDataset(train_samples, transform=train_tf)
+        val_ds = MultiModalityDataset(val_samples, transform=eval_tf)
+        test_ds = MultiModalityDataset(test_samples, transform=eval_tf)
 
         # 5) DataLoaders
         train_loader = DataLoader(
@@ -335,7 +384,7 @@ def main():
         num_classes=num_classes,
         channels=cfg.model["channels"],
         regularisation=cfg.model["regularisation"],  # "none" | "dropout" | "batchnorm"
-        dropout=cfg.model["dropout"],                # used when regularisation == "dropout"
+        dropout=cfg.model["dropout"],  # used when regularisation == "dropout"
     ).to(device)
 
     # Loss & Optimizer
@@ -361,7 +410,7 @@ def main():
         scheduler = CosineAnnealingLR(optimizer, T_max=T_max)
         print(f"[Scheduler] Using CosineAnnealingLR with T_max={T_max}")
 
-    # ClearML
+    # ClearML task
     task = init_task(
         enabled=cfg.clearml["enabled"],
         project=cfg.clearml.get("project") or cfg.project_name,
@@ -375,7 +424,7 @@ def main():
     if task is not None and remote_queue:
         try:
             from clearml import Task as ClearMLTask
-            # Only enqueue if we are running locally; on the agent this is a no-op
+
             if ClearMLTask.running_locally():
                 print(f"[ClearML] Executing remotely on queue '{remote_queue}'")
                 task.execute_remotely(queue_name=remote_queue, exit_process=True)
@@ -388,7 +437,9 @@ def main():
         min_delta=cfg.train.get("min_delta", 0.0),
     )
 
+    # ------------------------------------------------------------------
     # Training with early stopping on val accuracy
+    # ------------------------------------------------------------------
     best_val_acc = 0.0
     best_epoch = 0
     best_path = os.path.join("outputs", "best.pt")
