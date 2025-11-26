@@ -8,6 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from tqdm import tqdm
 import yaml
 from datasets import load_dataset
 from PIL import Image
@@ -114,16 +115,36 @@ def accuracy(logits, targets):
     return (preds == targets).float().mean().item()
 
 
+def _unpack_batch(batch, device):
+    """
+    MultiModalityDataset may return (x, y) or (x, y, extra...).
+    We only care about the first two entries.
+    """
+    if isinstance(batch, (list, tuple)):
+        if len(batch) < 2:
+            raise ValueError(f"Unexpected batch with length {len(batch)}")
+        xb, yb = batch[0], batch[1]
+    else:
+        # Fallback: assume standard (x, y)
+        xb, yb = batch
+
+    xb = xb.to(device)
+    yb = yb.to(device)
+    return xb, yb
+
+
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
     running_loss, running_acc, n = 0.0, 0.0, 0
-    for xb, yb in loader:
-        xb, yb = xb.to(device), yb.to(device)
+    for batch in loader:
+        xb, yb = _unpack_batch(batch, device)
+
         optimizer.zero_grad()
         logits = model(xb)
         loss = criterion(logits, yb)
         loss.backward()
         optimizer.step()
+
         running_loss += loss.item() * xb.size(0)
         running_acc += (logits.argmax(1) == yb).float().sum().item()
         n += xb.size(0)
@@ -134,8 +155,9 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
 def evaluate(model, loader, criterion, device):
     model.eval()
     running_loss, running_acc, n = 0.0, 0.0, 0
-    for xb, yb in loader:
-        xb, yb = xb.to(device), yb.to(device)
+    for batch in loader:
+        xb, yb = _unpack_batch(batch, device)
+
         logits = model(xb)
         loss = criterion(logits, yb)
         running_loss += loss.item() * xb.size(0)
@@ -165,7 +187,7 @@ def main():
     data_source = cfg.data.get("source", "hf")
 
     if data_source == "hf":
-        # ===== OLD HF BEHAVIOUR (legacy path) =====
+        # ===== HF path (kept for reference, normally not used now) =====
         print("[Data] Loading HF dataset:", cfg.data["dataset_name"])
         ds = load_dataset(cfg.data["dataset_name"])
 
@@ -197,20 +219,16 @@ def main():
         val_hf = full.select(val_idx.tolist())
         test_hf = full.select(test_idx.tolist())
 
-        # Transforms – be robust to different return formats
-        tf_result = get_transforms(
-            cfg.data["image_size"],        # positional size
+        # Transforms
+        transforms = get_transforms(
+            img_size=cfg.data["image_size"],
             normalize=cfg.data["normalize"],
             augment=cfg.data["augment"],
         )
-        if isinstance(tf_result, tuple):
-            train_tf, eval_tf = tf_result[0], tf_result[1]
-        else:
-            train_tf = eval_tf = tf_result
 
-        train_ds = HFDataset(train_hf, transform=train_tf)
-        val_ds = HFDataset(val_hf, transform=eval_tf)
-        test_ds = HFDataset(test_hf, transform=eval_tf)
+        train_ds = HFDataset(train_hf, transform=transforms["train"])
+        val_ds = HFDataset(val_hf, transform=transforms["eval"])
+        test_ds = HFDataset(test_hf, transform=transforms["eval"])
 
         train_loader = DataLoader(
             train_ds,
@@ -244,7 +262,7 @@ def main():
             "medium": "ee3e7d7e511a47449f7206809eced7c1",   # ~30%
             "large":  "a20b80fd8e85450d9db29dc867a13c3e",   # ~60%
         }
-        subset_key = cfg.data.get("clearml_subset", "medium")
+        subset_key = cfg.data.get("clearml_subset", "tiny")
         dataset_id = DATASET_IDS[subset_key]
 
         print(f"[Data] Fetching ClearML Dataset '{subset_key}' ({dataset_id})")
@@ -274,26 +292,16 @@ def main():
             f"Train={len(train_samples)}, Val={len(val_samples)}, Test={len(test_samples)}"
         )
 
-        # 4) Transforms & datasets – robust to different return formats
-        img_size = cfg.data["image_size"]
-        normalize = cfg.data["normalize"]
-        augment = cfg.data["augment"]
-
-        tf_result = get_transforms(
-            img_size,        # positional size
-            normalize=normalize,
-            augment=augment,
+        # 4) Transforms & datasets
+        transforms = get_transforms(
+            img_size=cfg.data["image_size"],
+            normalize=cfg.data["normalize"],
+            augment=cfg.data["augment"],
         )
-        if isinstance(tf_result, tuple):
-            train_tf, eval_tf = tf_result[0], tf_result[1]
-        else:
-            train_tf = eval_tf = tf_result
 
-        # ⚠️ IMPORTANT: pass transforms POSITIONALLY so we don't depend on the
-        # parameter name in MultiModalityDataset.__init__
-        train_ds = MultiModalityDataset(train_samples, train_tf)
-        val_ds   = MultiModalityDataset(val_samples,   eval_tf)
-        test_ds  = MultiModalityDataset(test_samples,  eval_tf)
+        train_ds = MultiModalityDataset(train_samples, transforms=transforms)
+        val_ds   = MultiModalityDataset(val_samples,   transforms=transforms)
+        test_ds  = MultiModalityDataset(test_samples,  transforms=transforms)
 
         # 5) DataLoaders
         train_loader = DataLoader(
