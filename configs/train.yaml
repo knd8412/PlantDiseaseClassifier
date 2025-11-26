@@ -5,6 +5,8 @@ tags: ["baseline", "scratch", "subset25"]
 device: "cuda"
 
 data:
+  source: "clearml"
+  clearml_subset: "medium"
   dataset_name: "DScomp380/plant_village"
   data_dir: "/kaggle/input/plantvillage-dataset"  # Change to your path
   modalities: ["color", "grayscale", "segmented"]
@@ -14,8 +16,7 @@ data:
   test_size: 0.15
   num_workers: 4
   normalize: true
-  augment: false
-  
+  augment: true  
   # Class imbalance handling
   balance_strategy: null  # Options: null, "uniform", "weighted_sampler", "weighted_loss", "hybrid"
   # - null: no balancing

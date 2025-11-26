@@ -13,9 +13,19 @@ import yaml
 from datasets import load_dataset
 from PIL import Image
 
-from .data.transforms import get_transforms
 from .models.convnet_scratch import build_model
 from .clearml_utils import init_task, log_scalar, upload_model
+
+from clearml import Dataset as ClearMLDataset
+
+from data.transforms import get_transforms
+from data.dataset import MultiModalityDataset
+from data.utils import (
+    build_class_mapping,
+    gather_samples,
+    split_dataset,
+    ensure_dataset_extracted,
+)
 
 
 @dataclass
@@ -150,66 +160,163 @@ def main():
     )
     os.makedirs("outputs", exist_ok=True)
 
-    # Load dataset from HF
-    print("[Data] Loading dataset:", cfg.data["dataset_name"])
-    ds = load_dataset(cfg.data["dataset_name"])
+    # ------------------------------------------------------------------
+    # DATA LOADING: HF (legacy) vs ClearML (new)
+    # ------------------------------------------------------------------
+    data_source = cfg.data.get("source", "hf")
 
-    # Single split provided -> use 'train' or the only available
-    split_name = "train" if "train" in ds else list(ds.keys())[0]
-    full = ds[split_name]
+    if data_source == "hf":
+        # ===== OLD HF BEHAVIOUR (kept for reference, not used in coursework) =====
+        print("[Data] Loading HF dataset:", cfg.data["dataset_name"])
+        ds = load_dataset(cfg.data["dataset_name"])
 
-    # Optional subset for fast iteration
-    if cfg.data.get("subset_fraction", 1.0) < 1.0:
-        n = int(len(full) * cfg.data["subset_fraction"])
-        full = full.shuffle(seed=cfg.seed).select(range(n))
-        print(f"[Data] Using subset: {n} samples")
+        split_name = "train" if "train" in ds else list(ds.keys())[0]
+        full = ds[split_name]
 
-    labels = [
-        int(item.get("label") if "label" in item else item.get("labels"))
-        for item in full
-    ]
-    num_classes = len(set(labels))
-    print(f"[Data] Classes: {num_classes}, Samples: {len(full)}")
+        # Optional subset for fast iteration
+        if cfg.data.get("subset_fraction", 1.0) < 1.0:
+            n = int(len(full) * cfg.data["subset_fraction"])
+            full = full.shuffle(seed=cfg.seed).select(range(n))
+            print(f"[Data] Using subset: {n} samples")
 
-    # Stratified split
-    train_idx, val_idx, test_idx = stratified_split(
-        full,
-        labels,
-        cfg.data["val_size"],
-        cfg.data["test_size"],
-        seed=cfg.seed,
-    )
-    train_hf = full.select(train_idx.tolist())
-    val_hf = full.select(val_idx.tolist())
-    test_hf = full.select(test_idx.tolist())
+        labels = [
+            int(item.get("label") if "label" in item else item.get("labels"))
+            for item in full
+        ]
+        num_classes = len(set(labels))
+        print(f"[Data] Classes: {num_classes}, Samples: {len(full)}")
 
-    # Transforms
-    train_tf, eval_tf = get_transforms(
-        img_size=cfg.data["image_size"],
-        normalize=cfg.data["normalize"],
-        augment=cfg.data["augment"],
-    )
+        # Stratified split
+        train_idx, val_idx, test_idx = stratified_split(
+            full,
+            labels,
+            cfg.data["val_size"],
+            cfg.data["test_size"],
+            seed=cfg.seed,
+        )
+        train_hf = full.select(train_idx.tolist())
+        val_hf = full.select(val_idx.tolist())
+        test_hf = full.select(test_idx.tolist())
 
-    train_ds = HFDataset(train_hf, transform=train_tf)
-    val_ds = HFDataset(val_hf, transform=eval_tf)
-    test_ds = HFDataset(test_hf, transform=eval_tf)
+        # Transforms
+        train_tf, eval_tf = get_transforms(
+            img_size=cfg.data["image_size"],
+            normalize=cfg.data["normalize"],
+            augment=cfg.data["augment"],
+        )
 
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=cfg.train["batch_size"],
-        shuffle=True,
-        num_workers=cfg.data["num_workers"],
-        pin_memory=True,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=cfg.train["batch_size"],
-        shuffle=False,
-        num_workers=cfg.data["num_workers"],
-        pin_memory=True,
-    )
+        train_ds = HFDataset(train_hf, transform=train_tf)
+        val_ds = HFDataset(val_hf, transform=eval_tf)
+        test_ds = HFDataset(test_hf, transform=eval_tf)
 
-    # Model
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=cfg.train["batch_size"],
+            shuffle=True,
+            num_workers=cfg.data["num_workers"],
+            pin_memory=True,
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=cfg.train["batch_size"],
+            shuffle=False,
+            num_workers=cfg.data["num_workers"],
+            pin_memory=True,
+        )
+        test_loader = DataLoader(
+            test_ds,
+            batch_size=cfg.train["batch_size"],
+            shuffle=False,
+            num_workers=cfg.data["num_workers"],
+            pin_memory=True,
+        )
+
+        # If you don't want anyone to use HF path, uncomment:
+        # raise NotImplementedError("HF path kept only for reference. Use data.source: 'clearml'.")
+
+    else:
+        # ===================== CLEARML DATASET PATH =====================
+        print("[Data] Using ClearML dataset pipeline")
+
+        # 1) Choose which subset to use
+        DATASET_IDS = {
+            "tiny":   "e1277db0a8a445d9b6faa1f3947c1fe0",   # ~5%
+            "medium": "ee3e7d7e511a47449f7206809eced7c1",   # ~30%
+            "large":  "a20b80fd8e85450d9db29dc867a13c3e",   # ~60%
+        }
+        subset_key = cfg.data.get("clearml_subset", "medium")
+        dataset_id = DATASET_IDS[subset_key]
+
+        print(f"[Data] Fetching ClearML Dataset '{subset_key}' ({dataset_id})")
+        cl_dataset = ClearMLDataset.get(dataset_id)
+        local_path = cl_dataset.get_local_copy()
+        local_path = ensure_dataset_extracted(local_path)
+        print(f"[Data] Local dataset path: {local_path}")
+
+        # 2) Build class mapping & sample list
+        modalities = cfg.data.get("modalities", ["color"])
+        class_names, class_to_idx = build_class_mapping(local_path, modality="color")
+        num_classes = len(class_names)
+        print(f"[Data] Found {num_classes} classes")
+
+        samples = gather_samples(local_path, modalities, class_to_idx)
+        print(f"[Data] Total samples in '{subset_key}' subset: {len(samples)}")
+
+        # 3) Split into train / val / test
+        train_samples, val_samples, test_samples = split_dataset(
+            samples,
+            test_size=cfg.data["test_size"],
+            val_size=cfg.data["val_size"],
+            random_state=cfg.seed,
+        )
+        print(
+            f"[Data] Split sizes: "
+            f"Train={len(train_samples)}, Val={len(val_samples)}, Test={len(test_samples)}"
+        )
+
+        # 4) Transforms & datasets
+        img_size = cfg.data["image_size"]
+        normalize = cfg.data["normalize"]
+        augment = cfg.data["augment"]
+
+        train_tf, eval_tf = get_transforms(
+            img_size=img_size,
+            normalize=normalize,
+            augment=augment,
+        )
+
+        train_ds = MultiModalityDataset(train_samples, transform=train_tf)
+        val_ds   = MultiModalityDataset(val_samples,   transform=eval_tf)
+        test_ds  = MultiModalityDataset(test_samples,  transform=eval_tf)
+
+        # 5) DataLoaders
+        train_loader = DataLoader(
+            train_ds,
+            batch_size=cfg.train["batch_size"],
+            shuffle=True,
+            num_workers=cfg.data["num_workers"],
+            pin_memory=True,
+        )
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=cfg.train["batch_size"],
+            shuffle=False,
+            num_workers=cfg.data["num_workers"],
+            pin_memory=True,
+        )
+        test_loader = DataLoader(
+            test_ds,
+            batch_size=cfg.train["batch_size"],
+            shuffle=False,
+            num_workers=cfg.data["num_workers"],
+            pin_memory=True,
+        )
+
+        print("[Data] Dataloaders ready.")
+
+    # ------------------------------------------------------------------
+    # MODEL
+    # ------------------------------------------------------------------
     model = build_model(
         num_classes=num_classes,
         channels=cfg.model["channels"],
@@ -240,7 +347,7 @@ def main():
         scheduler = CosineAnnealingLR(optimizer, T_max=T_max)
         print(f"[Scheduler] Using CosineAnnealingLR with T_max={T_max}")
 
-        # ClearML
+    # ClearML
     task = init_task(
         enabled=cfg.clearml["enabled"],
         project=cfg.clearml.get("project") or cfg.project_name,
@@ -266,7 +373,6 @@ def main():
         patience=cfg.train.get("patience", 3),
         min_delta=cfg.train.get("min_delta", 0.0),
     )
-
 
     # Training with early stopping on val accuracy
     best_val_acc = 0.0
