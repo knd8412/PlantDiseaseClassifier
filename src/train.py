@@ -1,31 +1,35 @@
-import argparse, os, json, random
+import argparse
+import json
+import os
+import random
 from dataclasses import dataclass
 from typing import List
+
 import numpy as np
-from sklearn.model_selection import StratifiedShuffleSplit
 import torch
-from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from tqdm import tqdm
 import yaml
+from clearml import Dataset as ClearMLDataset
 from datasets import load_dataset
 from PIL import Image
+from sklearn.model_selection import StratifiedShuffleSplit
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
-from .models.convnet_scratch import build_model
-from .clearml_utils import init_task, log_scalar, upload_model
-
-from clearml import Dataset as ClearMLDataset
-
-from data.transforms import get_transforms
 from data.dataset import MultiModalityDataset
+from data.transforms import get_transforms
 from data.utils import (
     build_class_mapping,
+    ensure_dataset_extracted,
     gather_samples,
     split_dataset,
-    ensure_dataset_extracted,
 )
+
+from .clearml_utils import init_task, log_scalar, upload_model
+from .models.convnet_scratch import build_model as build_scratch_model
+from .models.resnet import ResNet18Classifier
 
 
 @dataclass
@@ -120,17 +124,28 @@ def _unpack_batch(batch, device):
     MultiModalityDataset may return (x, y) or (x, y, extra...).
     We only care about the first two entries.
     """
-    if isinstance(batch, (list, tuple)):
-        if len(batch) < 2:
-            raise ValueError(f"Unexpected batch with length {len(batch)}")
-        xb, yb = batch[0], batch[1]
-    else:
-        # Fallback: assume standard (x, y)
-        xb, yb = batch
+    # if isinstance(batch, (list, tuple)):
+    #     if len(batch) < 2:
+    #         raise ValueError(f"Unexpected batch with length {len(batch)}")
+    #     xb, yb = batch[0], batch[1]
+    # else:
+    #     # Fallback: assume standard (x, y)
+    #     xb, yb = batch
 
-    xb = xb.to(device)
-    yb = yb.to(device)
-    return xb, yb
+    # xb = xb.to(device)
+    # yb = yb.to(device)
+    # return xb, yb
+
+    if isinstance(batch, dict):
+        xb = batch["image"].to(device)
+        yb = batch["label"].to(device)
+        return xb, yb
+
+    if isinstance(batch, (list, tuple)):
+        xb, yb = batch[0], batch[1]
+        return xb.to(device), yb.to(device)
+
+    raise ValueError(f"Unexpected batch type: {type(batch)}")
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
@@ -220,15 +235,22 @@ def main():
         test_hf = full.select(test_idx.tolist())
 
         # Transforms
-        transforms = get_transforms(
-            img_size=cfg.data["image_size"],
+        train_transforms = get_transforms(
+            image_size=cfg.data["image_size"],
+            train=True,
             normalize=cfg.data["normalize"],
             augment=cfg.data["augment"],
         )
+        eval_transforms = get_transforms(
+            image_size=cfg.data["image_size"],
+            train=False,
+            normalize=cfg.data["normalize"],
+            augment=False,
+        )
 
-        train_ds = HFDataset(train_hf, transform=transforms["train"])
-        val_ds = HFDataset(val_hf, transform=transforms["eval"])
-        test_ds = HFDataset(test_hf, transform=transforms["eval"])
+        train_ds = HFDataset(train_hf, transform=train_transforms["color"])
+        val_ds = HFDataset(val_hf, transform=eval_transforms["color"])
+        test_ds = HFDataset(test_hf, transform=eval_transforms["color"])
 
         train_loader = DataLoader(
             train_ds,
@@ -244,13 +266,13 @@ def main():
             num_workers=cfg.data["num_workers"],
             pin_memory=True,
         )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=cfg.train["batch_size"],
-            shuffle=False,
-            num_workers=cfg.data["num_workers"],
-            pin_memory=True,
-        )
+        # test_loader = DataLoader(
+        #     test_ds,
+        #     batch_size=cfg.train["batch_size"],
+        #     shuffle=False,
+        #     num_workers=cfg.data["num_workers"],
+        #     pin_memory=True,
+        # )
 
     else:
         # ===================== CLEARML DATASET PATH =====================
@@ -258,9 +280,9 @@ def main():
 
         # 1) Choose which subset to use
         DATASET_IDS = {
-            "tiny":   "e1277db0a8a445d9b6faa1f3947c1fe0",   # ~5%
-            "medium": "ee3e7d7e511a47449f7206809eced7c1",   # ~30%
-            "large":  "a20b80fd8e85450d9db29dc867a13c3e",   # ~60%
+            "tiny": "e1277db0a8a445d9b6faa1f3947c1fe0",  # ~5%
+            "medium": "ee3e7d7e511a47449f7206809eced7c1",  # ~30%
+            "large": "a20b80fd8e85450d9db29dc867a13c3e",  # ~60%
         }
         subset_key = cfg.data.get("clearml_subset", "tiny")
         dataset_id = DATASET_IDS[subset_key]
@@ -293,15 +315,23 @@ def main():
         )
 
         # 4) Transforms & datasets
-        transforms = get_transforms(
-            img_size=cfg.data["image_size"],
+        train_transforms = get_transforms(
+            image_size=cfg.data["image_size"],
+            train=True,
             normalize=cfg.data["normalize"],
             augment=cfg.data["augment"],
         )
 
-        train_ds = MultiModalityDataset(train_samples, transforms=transforms)
-        val_ds   = MultiModalityDataset(val_samples,   transforms=transforms)
-        test_ds  = MultiModalityDataset(test_samples,  transforms=transforms)
+        eval_transforms = get_transforms(
+            image_size=cfg.data["image_size"],
+            train=False,
+            normalize=cfg.data["normalize"],
+            augment=False,
+        )
+
+        train_ds = MultiModalityDataset(train_samples, transforms=train_transforms)
+        val_ds = MultiModalityDataset(val_samples, transforms=eval_transforms)
+        test_ds = MultiModalityDataset(test_samples, transforms=eval_transforms)
 
         # 5) DataLoaders
         train_loader = DataLoader(
@@ -318,25 +348,43 @@ def main():
             num_workers=cfg.data["num_workers"],
             pin_memory=True,
         )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=cfg.train["batch_size"],
-            shuffle=False,
-            num_workers=cfg.data["num_workers"],
-            pin_memory=True,
-        )
+        # test_loader = DataLoader(
+        #     test_ds,
+        #     batch_size=cfg.train["batch_size"],
+        #     shuffle=False,
+        #     num_workers=cfg.data["num_workers"],
+        #     pin_memory=True,
+        # )
 
         print("[Data] Dataloaders ready.")
 
     # ------------------------------------------------------------------
     # MODEL
     # ------------------------------------------------------------------
-    model = build_model(
-        num_classes=num_classes,
-        channels=cfg.model["channels"],
-        regularisation=cfg.model["regularisation"],  # "none" | "dropout" | "batchnorm"
-        dropout=cfg.model["dropout"],                # used when regularisation == "dropout"
-    ).to(device)
+
+    arch = cfg.model.get("arch", "scratch")
+
+    if arch == "scratch":
+        model = build_scratch_model(
+            num_classes=num_classes,
+            channels=cfg.model["channels"],
+            regularisation=cfg.model[
+                "regularisation"
+            ],  # "none" | "dropout" | "batchnorm"
+            dropout=cfg.model["dropout"],  # used when regularisation == "dropout"
+        ).to(device)
+
+    elif arch == "resnet18":
+        model = ResNet18Classifier(
+            num_classes=num_classes,
+            # adapt these kwargs to match your __init__ in resnet.py
+            pretrained=cfg.model.get("pretrained", True),
+            dropout=cfg.model.get("dropout", 0.0),
+            train_backbone=cfg.model.get("train_backbone", True),
+        ).to(device)
+
+    else:
+        raise ValueError(f"Unknown model arch: {arch}")
 
     # Loss & Optimizer
     criterion = nn.CrossEntropyLoss()
@@ -375,6 +423,7 @@ def main():
     if task is not None and remote_queue:
         try:
             from clearml import Task as ClearMLTask
+
             # Only enqueue if we are running locally; on the agent this is a no-op
             if ClearMLTask.running_locally():
                 print(f"[ClearML] Executing remotely on queue '{remote_queue}'")
