@@ -266,13 +266,13 @@ def main():
             num_workers=cfg.data["num_workers"],
             pin_memory=True,
         )
-        # test_loader = DataLoader(
-        #     test_ds,
-        #     batch_size=cfg.train["batch_size"],
-        #     shuffle=False,
-        #     num_workers=cfg.data["num_workers"],
-        #     pin_memory=True,
-        # )
+        test_loader = DataLoader(
+            test_ds,
+            batch_size=cfg.train["batch_size"],
+            shuffle=False,
+            num_workers=cfg.data["num_workers"],
+            pin_memory=True,
+        )
 
     else:
         # ===================== CLEARML DATASET PATH =====================
@@ -291,7 +291,32 @@ def main():
         cl_dataset = ClearMLDataset.get(dataset_id)
         local_path = cl_dataset.get_local_copy()
         local_path = ensure_dataset_extracted(local_path)
-        print(f"[Data] Local dataset path: {local_path}")
+
+        print("\n================ DEBUG: DATASET PATH ================")
+        print("local_path =", local_path)
+
+        # Show contents of local_path
+        if os.path.exists(local_path):
+            print("\nContents of local_path:")
+            for item in os.listdir(local_path):
+                print("  -", item)
+        else:
+            print("local_path does NOT exist!")
+
+        # Check modality folder
+        modality_dir = os.path.join(local_path, "color")
+        print("\n--- Checking modality folder ---")
+        print("modality_dir =", modality_dir)
+        print("Exists?", os.path.isdir(modality_dir))
+
+        if os.path.isdir(modality_dir):
+            print("Contents of modality folder:")
+            for item in os.listdir(modality_dir):
+                print("  -", item)
+        else:
+            print("No 'color' directory found inside dataset.")
+
+        print("=====================================================\n")
 
         # 2) Build class mapping & sample list
         modalities = cfg.data.get("modalities", ["color"])
@@ -329,9 +354,9 @@ def main():
             augment=False,
         )
 
-        train_ds = MultiModalityDataset(train_samples, transforms=train_transforms)
-        val_ds = MultiModalityDataset(val_samples, transforms=eval_transforms)
-        test_ds = MultiModalityDataset(test_samples, transforms=eval_transforms)
+        train_ds = MultiModalityDataset(train_samples, train_transforms)
+        val_ds = MultiModalityDataset(val_samples, eval_transforms)
+        test_ds = MultiModalityDataset(test_samples, eval_transforms)
 
         # 5) DataLoaders
         train_loader = DataLoader(
@@ -348,13 +373,13 @@ def main():
             num_workers=cfg.data["num_workers"],
             pin_memory=True,
         )
-        # test_loader = DataLoader(
-        #     test_ds,
-        #     batch_size=cfg.train["batch_size"],
-        #     shuffle=False,
-        #     num_workers=cfg.data["num_workers"],
-        #     pin_memory=True,
-        # )
+        test_loader = DataLoader(
+            test_ds,
+            batch_size=cfg.train["batch_size"],
+            shuffle=False,
+            num_workers=cfg.data["num_workers"],
+            pin_memory=True,
+        )
 
         print("[Data] Dataloaders ready.")
 

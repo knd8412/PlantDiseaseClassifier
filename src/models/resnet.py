@@ -28,27 +28,27 @@ class ResNet18Classifier(nn.Module):
             self.normalise_std = weights.meta["std"]
 
         else:
-            model = resnet18(weights=None)
+            backbone = resnet18(weights=None)
             self.normalise_mean = [0.485, 0.456, 0.406]
-            self.normalise_std = [0.299, 0.224, 0.225]
+            self.normalise_std = [0.229, 0.224, 0.225]
 
-        inp_features = model.fc.in_features
+        inp_features = backbone.fc.in_features
 
         if dropout > 0:
-            model.fc = nn.Sequential(
+            backbone.fc = nn.Sequential(
                 nn.Dropout(p=dropout), nn.Linear(inp_features, num_classes)
             )
 
         else:
-            model.fc = nn.Linear(inp_features, num_classes)
+            backbone.fc = nn.Linear(inp_features, num_classes)
 
         if not train_backbone:
-            for param in model.parameters():
+            for param in backbone.parameters():
                 param.requires_grad = False
-            for param in model.fc.parameters():
+            for param in backbone.fc.parameters():
                 param.requires_grad = True
 
         self.model = backbone
 
-        def forward(self, x):
-            return self.model(x)
+    def forward(self, x):
+        return self.model(x)

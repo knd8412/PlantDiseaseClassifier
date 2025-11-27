@@ -39,10 +39,4 @@ clearml:
   project: "KCL-PlantVillage"
   task_name: "convnet_baseline_intermediate"
   output_uri: null
-  clearml:
-  enabled: true
-  project: "KCL-PlantVillage"
-  task_name: "convnet_baseline_intermediate"
-  output_uri: null
   queue: "default"
-
