@@ -292,30 +292,18 @@ def main():
         local_path = cl_dataset.get_local_copy()
         local_path = ensure_dataset_extracted(local_path)
 
-        print("\n================ DEBUG: DATASET PATH ================")
+        print("\n================ DEBUG: DATASET PATH (DEEP SCAN) ================")
         print("local_path =", local_path)
 
-        # Show contents of local_path
-        if os.path.exists(local_path):
-            print("\nContents of local_path:")
-            for item in os.listdir(local_path):
-                print("  -", item)
-        else:
-            print("local_path does NOT exist!")
-
-        # Check modality folder
-        modality_dir = os.path.join(local_path, "color")
-        print("\n--- Checking modality folder ---")
-        print("modality_dir =", modality_dir)
-        print("Exists?", os.path.isdir(modality_dir))
-
-        if os.path.isdir(modality_dir):
-            print("Contents of modality folder:")
-            for item in os.listdir(modality_dir):
-                print("  -", item)
-        else:
-            print("No 'color' directory found inside dataset.")
-
+        # Deep scan the folder tree
+        for root, dirs, files in os.walk(local_path):
+            level = root.replace(local_path, "").count(os.sep)
+            indent = " " * (2 * level)
+            print(f"{indent}{os.path.basename(root)}/")
+            for d in dirs:
+                print(f"{indent}  {d}/")
+            for f in files:
+                print(f"{indent}  {f}")
         print("=====================================================\n")
 
         # 2) Build class mapping & sample list
@@ -445,16 +433,16 @@ def main():
 
     # If configured, send this task to a remote ClearML queue and stop local execution
     remote_queue = cfg.clearml.get("queue")
-    if task is not None and remote_queue:
-        try:
-            from clearml import Task as ClearMLTask
+    # if task is not None and remote_queue:
+    #     try:
+    #         from clearml import Task as ClearMLTask
 
-            # Only enqueue if we are running locally; on the agent this is a no-op
-            if ClearMLTask.running_locally():
-                print(f"[ClearML] Executing remotely on queue '{remote_queue}'")
-                task.execute_remotely(queue_name=remote_queue, exit_process=True)
-        except Exception as e:
-            print(f"[ClearML] execute_remotely failed ({e}), continuing locally.")
+    #         # Only enqueue if we are running locally; on the agent this is a no-op
+    #         if ClearMLTask.running_locally():
+    #             print(f"[ClearML] Executing remotely on queue '{remote_queue}'")
+    #             task.execute_remotely(queue_name=remote_queue, exit_process=True)
+    #     except Exception as e:
+    #         print(f"[ClearML] execute_remotely failed ({e}), continuing locally.")
 
     # Early stopping
     early_stopper = EarlyStopping(

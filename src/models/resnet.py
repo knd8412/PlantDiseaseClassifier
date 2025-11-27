@@ -14,6 +14,9 @@ from torch.optim import lr_scheduler
 from torchvision import datasets, models, transforms
 from torchvision.models import ResNet18_Weights, resnet18
 
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
 
 class ResNet18Classifier(nn.Module):
     def __init__(
@@ -24,13 +27,12 @@ class ResNet18Classifier(nn.Module):
         if pretrained:
             weights = ResNet18_Weights.IMAGENET1K_V1
             backbone = resnet18(weights=weights)
-            self.normalise_mean = weights.meta["mean"]
-            self.normalise_std = weights.meta["std"]
 
         else:
             backbone = resnet18(weights=None)
-            self.normalise_mean = [0.485, 0.456, 0.406]
-            self.normalise_std = [0.229, 0.224, 0.225]
+
+        self.normalise_mean = IMAGENET_MEAN
+        self.normalise_std = IMAGENET_STD
 
         inp_features = backbone.fc.in_features
 

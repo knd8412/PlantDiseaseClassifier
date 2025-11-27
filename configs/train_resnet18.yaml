@@ -1,11 +1,11 @@
 seed: 42
 project_name: "PlantVillage-ResNet18"
-task_name: "resnet18-medium-clearml"
+task_name: "resnet18-medium-clearml-V2"
 tags: ["resnet18", "transfer_learning", "medium_subset"]
 device: "cuda"
 
 data:
-  source: "clearml"
+  source: "hf"
   clearml_subset: "medium"      # "tiny" | "medium" | "large" as in train.py
   dataset_name: "DScomp380/plant_village"
   data_dir: "/kaggle/input/plantvillage-dataset"  # unused for clearml source, but ok
@@ -55,4 +55,4 @@ clearml:
   project: "KCL-PlantVillage"
   task_name: "resnet18-medium-clearml"
   output_uri: null
-  queue: "default"
+  queue: null
