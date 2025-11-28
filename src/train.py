@@ -393,13 +393,10 @@ def main():
             augment=False,
         )
 
-        # Use only color modality
-        train_tf = train_transforms["color"]
-        eval_tf = eval_transforms["color"]
-
-        train_ds = MultiModalityDataset(train_samples, transform=train_tf)
-        val_ds = MultiModalityDataset(val_samples, transform=eval_tf)
-        test_ds = MultiModalityDataset(test_samples, transform=eval_tf)
+        # MultiModalityDataset expects a dict of transforms
+        train_ds = MultiModalityDataset(train_samples, transforms=train_transforms)
+        val_ds = MultiModalityDataset(val_samples, transforms=eval_transforms)
+        test_ds = MultiModalityDataset(test_samples, transforms=eval_transforms)
 
         # 5) DataLoaders
         train_loader = DataLoader(
