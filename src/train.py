@@ -286,17 +286,41 @@ def main():
         print(f"[Data] Fetching ClearML Dataset '{subset_key}' ({dataset_id})")
         cl_dataset = ClearMLDataset.get(dataset_id)
         local_path = cl_dataset.get_local_copy()
-        local_path = ensure_dataset_extracted(local_path)
+        print(f"[Data] Raw dataset path: {local_path}")
+        
+        # ---- IMPROVED ZIP EXTRACTION ----
+        import zipfile
+        
+        # Check if there are any zip files that need extraction
+        if os.path.exists(local_path):
+            zip_files = [f for f in os.listdir(local_path) if f.endswith('.zip')]
+            
+            if zip_files:
+                print(f"[Data] Found zip files: {zip_files}")
+                for zip_file in zip_files:
+                    zip_path = os.path.join(local_path, zip_file)
+                    print(f"[Data] Extracting {zip_file}...")
+                    
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(local_path)
+                    
+                    print(f"[Data] Extraction complete")
+        
         print(f"[Data] Local dataset path: {local_path}")
-
-        # ---- NEW BIT: handle nested dataset folder (e.g. plantvillage_medium) ----
+        
+        # ---- Handle nested dataset folder (e.g. plantvillage_medium) ----
         color_dir = os.path.join(local_path, "color")
         if not os.path.isdir(color_dir):
+            # List all subdirectories
             subdirs = [
                 d
                 for d in os.listdir(local_path)
                 if os.path.isdir(os.path.join(local_path, d))
             ]
+            
+            print(f"[Data] Subdirectories found: {subdirs}")
+            
+            # Look for a subdirectory containing 'color'
             nested_root = None
             for d in subdirs:
                 cand = os.path.join(local_path, d)
@@ -308,9 +332,13 @@ def main():
                 local_path = nested_root
                 print(f"[Data] Detected nested dataset root, using: {local_path}")
             else:
+                # More detailed error message
+                all_contents = os.listdir(local_path)
                 raise RuntimeError(
-                    f"[Data] Could not find 'color' directory under {local_path}. "
-                    f"Subdirs: {subdirs}"
+                    f"[Data] Could not find 'color' directory.\n"
+                    f"Path: {local_path}\n"
+                    f"Subdirs: {subdirs}\n"
+                    f"All contents: {all_contents}"
                 )
 
         print(f"[Data] Final dataset root: {local_path}")
