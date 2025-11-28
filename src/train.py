@@ -153,7 +153,7 @@ def _unpack_batch(batch, device):
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
     running_loss, running_acc, n = 0.0, 0.0, 0
-    for batch in loader:  # ✅ FIXED: Changed from "for xb, yb in loader"
+    for batch in loader:
         xb, yb = _unpack_batch(batch, device)
         optimizer.zero_grad()
         logits = model(xb)
@@ -236,13 +236,23 @@ def main():
         val_hf = full.select(val_idx.tolist())
         test_hf = full.select(test_idx.tolist())
 
-        # Transforms (note: get_transforms may return 2 or 3 items)
-        tfs = get_transforms(
-            img_size=cfg.data["image_size"],
+        # Transforms - get_transforms returns dict of modality-specific transforms
+        train_transforms = get_transforms(
+            image_size=cfg.data["image_size"],
+            train=True,
             normalize=cfg.data["normalize"],
             augment=cfg.data["augment"],
         )
-        train_tf, eval_tf = tfs[0], tfs[1]
+        eval_transforms = get_transforms(
+            image_size=cfg.data["image_size"],
+            train=False,
+            normalize=cfg.data["normalize"],
+            augment=False,
+        )
+
+        # Use only color modality for HF dataset
+        train_tf = train_transforms["color"]
+        eval_tf = eval_transforms["color"]
 
         train_ds = HFDataset(train_hf, transform=train_tf)
         val_ds = HFDataset(val_hf, transform=eval_tf)
@@ -369,12 +379,23 @@ def main():
         normalize = cfg.data["normalize"]
         augment = cfg.data["augment"]
 
-        tfs = get_transforms(
-            img_size=img_size,
+        # Get transforms - returns dict of modality-specific transforms
+        train_transforms = get_transforms(
+            image_size=img_size,
+            train=True,
             normalize=normalize,
             augment=augment,
         )
-        train_tf, eval_tf = tfs[0], tfs[1]
+        eval_transforms = get_transforms(
+            image_size=img_size,
+            train=False,
+            normalize=normalize,
+            augment=False,
+        )
+
+        # Use only color modality
+        train_tf = train_transforms["color"]
+        eval_tf = eval_transforms["color"]
 
         train_ds = MultiModalityDataset(train_samples, transform=train_tf)
         val_ds = MultiModalityDataset(val_samples, transform=eval_tf)
