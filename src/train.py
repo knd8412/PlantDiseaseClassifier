@@ -133,16 +133,20 @@ def accuracy(logits, targets):
 
 def _unpack_batch(batch, device):
     """
-    Handle MultiModalityDataset batches that might be:
-      (image, label) or (image, label, extra1, extra2, ...)
-    Only the first two entries are used for training.
+    Handle MultiModalityDataset batches that return dictionaries.
+    Extracts image and label from the batch dict.
     """
-    if isinstance(batch, (list, tuple)):
+    if isinstance(batch, dict):
+        # MultiModalityDataset returns dict with 'image', 'label', 'modality'
+        xb = batch["image"]
+        yb = batch["label"]
+    elif isinstance(batch, (list, tuple)):
+        # Fallback for simple datasets that return tuples
         if len(batch) < 2:
             raise ValueError(f"Expected at least 2 elements in batch, got {len(batch)}")
         xb, yb = batch[0], batch[1]
     else:
-        raise ValueError(f"Expected batch to be tuple/list, got {type(batch)}")
+        raise ValueError(f"Expected batch to be dict, tuple, or list, got {type(batch)}")
 
     return xb.to(device), yb.to(device)
 
@@ -393,10 +397,10 @@ def main():
             augment=False,
         )
 
-        # MultiModalityDataset expects a dict of transforms
-        train_ds = MultiModalityDataset(train_samples, transforms=train_transforms)
-        val_ds = MultiModalityDataset(val_samples, transforms=eval_transforms)
-        test_ds = MultiModalityDataset(test_samples, transforms=eval_transforms)
+        # MultiModalityDataset expects modality_transforms parameter
+        train_ds = MultiModalityDataset(train_samples, modality_transforms=train_transforms)
+        val_ds = MultiModalityDataset(val_samples, modality_transforms=eval_transforms)
+        test_ds = MultiModalityDataset(test_samples, modality_transforms=eval_transforms)
 
         # 5) DataLoaders
         train_loader = DataLoader(
