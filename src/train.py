@@ -153,7 +153,7 @@ def _unpack_batch(batch, device):
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
     running_loss, running_acc, n = 0.0, 0.0, 0
-    for batch in loader:
+    for batch in loader:  # ✅ FIXED: Changed from "for xb, yb in loader"
         xb, yb = _unpack_batch(batch, device)
         optimizer.zero_grad()
         logits = model(xb)
