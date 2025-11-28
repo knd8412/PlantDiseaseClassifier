@@ -53,6 +53,6 @@ train:
 clearml:
   enabled: true
   project: "KCL-PlantVillage"
-  task_name: "resnet18-medium-clearml"
+  task_name: "resnet18-medium-clearml-v2"
   output_uri: null
   queue: null
