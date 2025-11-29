@@ -13,8 +13,7 @@ jobs:
 
   checks:
 
-    runs-on: ubuntu-latest
-
+    runs-on: self-hosted # removed ubuntu-latest to run checks on local device.
 
     steps:
       - name: Checkout repository
