@@ -191,8 +191,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/train.yaml")
     args = parser.parse_args()
+    config_path = args.config.replace("\\", "/")
 
-    with open(args.config, "r") as f:
+    with open(config_path, "r") as f:
         cfg_dict = yaml.safe_load(f)
     cfg = Config(**cfg_dict)
 
