@@ -1,29 +1,29 @@
 import argparse
 import json
 import os
+from typing import Dict, List, Tuple
 
-from typing import List, Dict, Tuple
-
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
+import yaml
 from datasets import load_dataset
 from PIL import Image
 from sklearn.metrics import (
+    classification_report,
     confusion_matrix,
     precision_recall_fscore_support,
-    classification_report,
 )
 from sklearn.model_selection import StratifiedShuffleSplit
-import matplotlib.pyplot as plt
-import seaborn as sns
-import yaml
+from torch.utils.data import DataLoader, Dataset
 
-# IMPORTANT: these imports assume you run as a module: `python -m src.evaluate_resnet18`
-from .models.resnet import ResNet18Classifier
-from data.transforms import get_transforms  # your multi-modality transforms
+from data.transforms import get_transforms  # the multi-modality transforms
+
 from .clearml_utils import init_task, log_scalar
+
+from .models.resnet import ResNet18Classifier
 
 
 def set_seed(seed: int):
@@ -38,13 +38,11 @@ def set_seed(seed: int):
 
 
 def stratified_split(labels, val_size=0.15, test_size=0.15, seed=42):
-   
+
     y = np.array(labels)
     idx = np.arange(len(y))
 
-    sss1 = StratifiedShuffleSplit(
-        n_splits=1, test_size=test_size, random_state=seed
-    )
+    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
     train_val_idx, test_idx = next(sss1.split(idx, y))
     y_train_val = y[train_val_idx]
 
@@ -59,7 +57,6 @@ def stratified_split(labels, val_size=0.15, test_size=0.15, seed=42):
 
 
 class HFDataset(Dataset):
-   
 
     def __init__(self, hf_split, transform):
         self.hf_split = hf_split
@@ -312,7 +309,9 @@ def evaluate_resnet(cfg_path: str, checkpoint_path: str, split: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate ResNet18 model on PlantVillage")
+    parser = argparse.ArgumentParser(
+        description="Evaluate ResNet18 model on PlantVillage"
+    )
     parser.add_argument(
         "--config",
         type=str,

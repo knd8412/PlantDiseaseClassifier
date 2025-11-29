@@ -292,20 +292,6 @@ def main():
         local_path = cl_dataset.get_local_copy()
         local_path = ensure_dataset_extracted(local_path)
 
-        print("\n================ DEBUG: DATASET PATH (DEEP SCAN) ================")
-        print("local_path =", local_path)
-
-        # Deep scan the folder tree
-        for root, dirs, files in os.walk(local_path):
-            level = root.replace(local_path, "").count(os.sep)
-            indent = " " * (2 * level)
-            print(f"{indent}{os.path.basename(root)}/")
-            for d in dirs:
-                print(f"{indent}  {d}/")
-            for f in files:
-                print(f"{indent}  {f}")
-        print("=====================================================\n")
-
         # 2) Build class mapping & sample list
         modalities = cfg.data.get("modalities", ["color"])
         class_names, class_to_idx = build_class_mapping(local_path, modality="color")
