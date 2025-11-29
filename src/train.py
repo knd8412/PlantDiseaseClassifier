@@ -197,6 +197,27 @@ def main():
         cfg_dict = yaml.safe_load(f)
     cfg = Config(**cfg_dict)
 
+    # ClearML task
+    task = init_task(
+        enabled=cfg.clearml["enabled"],
+        project=cfg.clearml.get("project") or cfg.project_name,
+        task_name=cfg.clearml.get("task_name") or cfg.task_name,
+        tags=cfg.tags,
+        params=cfg_dict,
+    )
+
+    # If configured, send this task to a remote ClearML queue and stop local execution
+    remote_queue = cfg.clearml.get("queue")
+    if task is not None and remote_queue:
+        try:
+            from clearml import Task as ClearMLTask
+
+            if ClearMLTask.running_locally():
+                print(f"[ClearML] Executing remotely on queue '{remote_queue}'")
+                task.execute_remotely(queue_name=remote_queue, exit_process=True)
+        except Exception as e:
+            print(f"[ClearML] execute_remotely failed ({e}), continuing locally.")
+            
     set_seed(cfg.seed)
     device = torch.device(
         cfg.device if torch.cuda.is_available() and cfg.device == "cuda" else "cpu"
@@ -461,26 +482,7 @@ def main():
         scheduler = CosineAnnealingLR(optimizer, T_max=T_max)
         print(f"[Scheduler] Using CosineAnnealingLR with T_max={T_max}")
 
-    # ClearML task
-    task = init_task(
-        enabled=cfg.clearml["enabled"],
-        project=cfg.clearml.get("project") or cfg.project_name,
-        task_name=cfg.clearml.get("task_name") or cfg.task_name,
-        tags=cfg.tags,
-        params=cfg_dict,
-    )
 
-    # If configured, send this task to a remote ClearML queue and stop local execution
-    remote_queue = cfg.clearml.get("queue")
-    if task is not None and remote_queue:
-        try:
-            from clearml import Task as ClearMLTask
-
-            if ClearMLTask.running_locally():
-                print(f"[ClearML] Executing remotely on queue '{remote_queue}'")
-                task.execute_remotely(queue_name=remote_queue, exit_process=True)
-        except Exception as e:
-            print(f"[ClearML] execute_remotely failed ({e}), continuing locally.")
 
     # Early stopping
     early_stopper = EarlyStopping(
