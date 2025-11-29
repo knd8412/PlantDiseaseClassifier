@@ -4,6 +4,7 @@ import json
 import random
 from dataclasses import dataclass
 from typing import List
+
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 
@@ -191,7 +192,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/train.yaml")
     args = parser.parse_args()
+    # Fix Windows backslashes so Linux worker can read the path
     config_path = args.config.replace("\\", "/")
+    print(f"[Config] Using config file: {config_path}")
 
     with open(config_path, "r") as f:
         cfg_dict = yaml.safe_load(f)
@@ -217,7 +220,7 @@ def main():
                 task.execute_remotely(queue_name=remote_queue, exit_process=True)
         except Exception as e:
             print(f"[ClearML] execute_remotely failed ({e}), continuing locally.")
-            
+
     set_seed(cfg.seed)
     device = torch.device(
         cfg.device if torch.cuda.is_available() and cfg.device == "cuda" else "cpu"
@@ -321,62 +324,11 @@ def main():
 
         print(f"[Data] Fetching ClearML Dataset '{subset_key}' ({dataset_id})")
         cl_dataset = ClearMLDataset.get(dataset_id)
-        local_path = cl_dataset.get_local_copy()
-        print(f"[Data] Raw dataset path: {local_path}")
-        
-        # ---- IMPROVED ZIP EXTRACTION ----
-        import zipfile
-        
-        # Check if there are any zip files that need extraction
-        if os.path.exists(local_path):
-            zip_files = [f for f in os.listdir(local_path) if f.endswith('.zip')]
-            
-            if zip_files:
-                print(f"[Data] Found zip files: {zip_files}")
-                for zip_file in zip_files:
-                    zip_path = os.path.join(local_path, zip_file)
-                    print(f"[Data] Extracting {zip_file}...")
-                    
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(local_path)
-                    
-                    print(f"[Data] Extraction complete")
-        
-        print(f"[Data] Local dataset path: {local_path}")
-        
-        # ---- Handle nested dataset folder (e.g. plantvillage_medium) ----
-        color_dir = os.path.join(local_path, "color")
-        if not os.path.isdir(color_dir):
-            # List all subdirectories
-            subdirs = [
-                d
-                for d in os.listdir(local_path)
-                if os.path.isdir(os.path.join(local_path, d))
-            ]
-            
-            print(f"[Data] Subdirectories found: {subdirs}")
-            
-            # Look for a subdirectory containing 'color'
-            nested_root = None
-            for d in subdirs:
-                cand = os.path.join(local_path, d)
-                if os.path.isdir(os.path.join(cand, "color")):
-                    nested_root = cand
-                    break
+        raw_path = cl_dataset.get_local_copy()
+        print(f"[Data] Raw dataset path: {raw_path}")
 
-            if nested_root is not None:
-                local_path = nested_root
-                print(f"[Data] Detected nested dataset root, using: {local_path}")
-            else:
-                # More detailed error message
-                all_contents = os.listdir(local_path)
-                raise RuntimeError(
-                    f"[Data] Could not find 'color' directory.\n"
-                    f"Path: {local_path}\n"
-                    f"Subdirs: {subdirs}\n"
-                    f"All contents: {all_contents}"
-                )
-
+        # Use the helper from data.utils, same as demo notebook
+        local_path = ensure_dataset_extracted(raw_path)
         print(f"[Data] Final dataset root: {local_path}")
 
         # 2) Build class mapping & sample list
@@ -420,9 +372,15 @@ def main():
         )
 
         # MultiModalityDataset expects modality_transforms parameter
-        train_ds = MultiModalityDataset(train_samples, modality_transforms=train_transforms)
-        val_ds = MultiModalityDataset(val_samples, modality_transforms=eval_transforms)
-        test_ds = MultiModalityDataset(test_samples, modality_transforms=eval_transforms)
+        train_ds = MultiModalityDataset(
+            train_samples, modality_transforms=train_transforms
+        )
+        val_ds = MultiModalityDataset(
+            val_samples, modality_transforms=eval_transforms
+        )
+        test_ds = MultiModalityDataset(
+            test_samples, modality_transforms=eval_transforms
+        )
 
         # 5) DataLoaders
         train_loader = DataLoader(
@@ -481,8 +439,6 @@ def main():
         T_max = scheduler_cfg.get("T_max", cfg.train["epochs"])
         scheduler = CosineAnnealingLR(optimizer, T_max=T_max)
         print(f"[Scheduler] Using CosineAnnealingLR with T_max={T_max}")
-
-
 
     # Early stopping
     early_stopper = EarlyStopping(
