@@ -5,6 +5,11 @@ PyTorch Dataset class for multi-modality plant disease classification.
 import torch
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from PIL import Image
+import yaml
+from clearml import Dataset
+from data.transforms import get_transforms
+from data.utils import build_class_mapping, gather_samples, split_dataset, ensure_dataset_extracted
+from data.visualization import show_batch
 
 
 class MultiModalityDataset(Dataset):
@@ -39,11 +44,7 @@ class MultiModalityDataset(Dataset):
         # Apply modality-specific transform
         img = self.transforms[modality](img)
 
-        return {
-            "image": img,
-            "label": torch.tensor(label, dtype=torch.long),
-            "modality": modality
-        }
+        return img, torch.tensor(label, dtype=torch.long)
 
 
 def create_dataloaders(train_samples, val_samples, test_samples, 
@@ -109,3 +110,122 @@ def create_dataloaders(train_samples, val_samples, test_samples,
     )
     
     return train_loader, val_loader, test_loader
+
+
+
+def load_dataset_and_dataloaders(
+    dataset_size="medium",
+    config_path="../configs/train.yaml"
+):
+    """
+    Full pipeline:
+      - Load config
+      - Select ClearML ID based on dataset_size argument
+      - Load ClearML dataset
+      - Extract if needed
+      - Build class mappings
+      - Gather samples
+      - Split train/val/test based on YAML config proportions
+      - Build transforms using get_transforms()
+      - Create DataLoaders
+    """
+
+    # ----------------------------------------------------
+    # 1. Load configuration
+    # ----------------------------------------------------
+    with open(config_path, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    data_cfg = cfg["data"]
+    ds_cfg = cfg["dataset"]
+    train_cfg = cfg["train"]
+
+    batch_size = train_cfg["batch_size"]
+    image_size = data_cfg["image_size"]
+    modalities = data_cfg["modalities"]
+    normalize = data_cfg["normalize"]
+    augment = data_cfg["augment"]
+    val_size = data_cfg["val_size"]
+    test_size = data_cfg["test_size"]
+    num_workers = data_cfg["num_workers"]
+
+    # ----------------------------------------------------
+    # 2. Validate dataset_size arg + pick ClearML id
+    # ----------------------------------------------------
+    if dataset_size not in ds_cfg["ids"]:
+        raise ValueError(
+            f"Invalid dataset_size '{dataset_size}'. "
+            f"Choose from: {list(ds_cfg['ids'].keys())}"
+        )
+
+    dataset_id = ds_cfg["ids"][dataset_size]
+    print(f"📦 Loading ClearML dataset: {dataset_size} ({dataset_id})")
+
+    # ----------------------------------------------------
+    # 3. Download / cache
+    # ----------------------------------------------------
+    dataset = Dataset.get(dataset_id)
+    local_path = dataset.get_local_copy()
+
+    if ds_cfg.get("auto_extract", True):
+        local_path = ensure_dataset_extracted(local_path)
+
+    print(f"Dataset ready at: {local_path}")
+
+    # ----------------------------------------------------
+    # 4. Build class mapping
+    # ----------------------------------------------------
+    class_names, class_to_idx = build_class_mapping(local_path, modality="color")
+    print(f"Found {len(class_names)} classes")
+
+    # ----------------------------------------------------
+    # 5. Gather samples
+    # ----------------------------------------------------
+    samples = gather_samples(local_path, modalities, class_to_idx)
+    print(f"Total samples: {len(samples)}")
+
+    # ----------------------------------------------------
+    # 6. Train/Val/Test split
+    # ----------------------------------------------------
+    train_s, val_s, test_s = split_dataset(
+        samples,
+        val_size=val_size,
+        test_size=test_size,
+        random_state=cfg["seed"],
+    )
+
+    print(f"Split → Train={len(train_s)}, Val={len(val_s)}, Test={len(test_s)}")
+
+    # ----------------------------------------------------
+    # 7. Transforms (using your get_transforms)
+    # ----------------------------------------------------
+    train_transforms = get_transforms(
+        image_size=image_size,
+        train=True,
+        normalize=normalize,
+        augment=augment
+    )
+
+    val_transforms = get_transforms(
+        image_size=image_size,
+        train=False,
+        normalize=normalize,
+        augment=False
+    )
+
+    # ----------------------------------------------------
+    # 8. Build DataLoaders
+    # ----------------------------------------------------
+    train_loader, val_loader, test_loader = create_dataloaders(
+        train_s,
+        val_s,
+        test_s,
+        train_transforms,
+        val_transforms,
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
+
+    print("✅ DataLoaders created successfully.")
+
+    return train_loader, val_loader, test_loader, class_names
