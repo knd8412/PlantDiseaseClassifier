@@ -1,7 +1,7 @@
 import torch
 
-from models.convnet_scratch import build_model as build_scratch_model
-from models.resnet import ResNet18Classifier
+from src.models.convnet_scratch import build_model as build_scratch_model
+from src.models.resnet import ResNet18Classifier
 
 
 def test_scratch_cnn_forward_shape():
