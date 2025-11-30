@@ -17,7 +17,7 @@ task = Task.init(
 # -----------------------------
 # SELECT DATASET
 # -----------------------------
-SELECTED_DATASET = "medium"  # Options: 'tiny', 'medium', 'large'
+SELECTED_DATASET = "large"  # Options: 'tiny', 'medium', 'large'
 
 train_loader, val_loader, test_loader, class_names = load_dataset_and_dataloaders(dataset_size=SELECTED_DATASET)
 
