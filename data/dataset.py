@@ -115,7 +115,7 @@ def create_dataloaders(train_samples, val_samples, test_samples,
 
 def load_dataset_and_dataloaders(
     dataset_size="medium",
-    config_path="../configs/train.yaml"
+    config_path="configs/train.yaml"
 ):
     """
     Full pipeline:
