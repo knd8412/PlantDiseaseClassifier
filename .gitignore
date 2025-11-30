@@ -1,4 +1,9 @@
-.venv/
-__pychache__/
-*.pyc
 *.log
+.venv/
+__pycache__/
+outputs/
+*.pt
+*.pyc
+.env
+clearml.conf
+
