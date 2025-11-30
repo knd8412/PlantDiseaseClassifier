@@ -27,26 +27,29 @@ def ensure_dataset_extracted(path):
                 zip_ref.extractall(extract_dir)
         target_path = extract_dir
 
-    # Case 2: path is a directory that might contain a zip
+    # Case 2: path is a directory that might contain one or more zip parts
     elif os.path.isdir(path):
         # Check if it already looks like a dataset (has 'color' folder)
         if os.path.exists(os.path.join(path, 'color')):
             return path
 
-        # Look for zip files
+        # Look for zip files (including chunked parts)
         files = os.listdir(path)
-        zip_files = [f for f in files if f.lower().endswith('.zip')]
-        
+        zip_files = sorted([f for f in files if f.lower().endswith('.zip')])
+
         if zip_files:
-            zip_file = zip_files[0]
-            zip_path = os.path.join(path, zip_file)
-            # Extract to a folder named after the zip
-            extract_dir = os.path.join(path, os.path.splitext(zip_file)[0])
-            
+            # Use the base name of the first zip part for extraction folder
+            base_name = os.path.splitext(zip_files[0])[0].replace('_part_001', '')
+            extract_dir = os.path.join(path, base_name)
+
             if not os.path.exists(extract_dir):
-                print(f"Extracting {zip_path}...")
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(extract_dir)
+                os.makedirs(extract_dir, exist_ok=True)
+                print(f"Extracting {len(zip_files)} zip parts to {extract_dir}...")
+                for zip_file in zip_files:
+                    zip_path = os.path.join(path, zip_file)
+                    print(f"  Extracting {zip_file}...")
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(extract_dir)
             target_path = extract_dir
 
     # After extraction, check if the data is nested (e.g. extracted_folder/dataset_name/color)

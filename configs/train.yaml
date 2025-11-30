@@ -4,6 +4,13 @@ task_name: "scratch-cnn-baseline"
 tags: ["baseline", "scratch", "subset25"]
 device: "cuda"
 
+dataset:
+  ids:
+    tiny:   "e1277db0a8a445d9b6faa1f3947c1fe0"   # 5% subset
+    medium: "428add6db5904f48a46c7eb9888b5820"   # 30% subset
+    large:  "f4c194815a6d4b849fd9eba04645a39e"   # 100% subset
+
+
 data:
   source: "clearml"
   clearml_subset: "tiny"
@@ -24,6 +31,7 @@ data:
   # - "weighted_sampler": use WeightedRandomSampler during training
   # - "weighted_loss": use class weights in loss function
   # - "hybrid": combine sampling and loss weighting
+  # NOT IMPLEMENTED YET
   
   # Strategy-specific configuration
   balance_config:
