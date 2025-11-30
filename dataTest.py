@@ -70,15 +70,15 @@ print(f"🚀 Training on {device} for 5 epochs...")
 # -----------------------------
 # TRAINING LOOP
 # -----------------------------
-for epoch in range(5):
+for epoch in range(50):
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
     
     for batch in train_loader:
-        inputs = batch['image'].to(device)
-        labels = batch['label'].to(device)
+        inputs = batch[0].to(device)
+        labels = batch[1].to(device)
         
         optimizer.zero_grad()
         outputs = model(inputs)
