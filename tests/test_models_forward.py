@@ -13,16 +13,20 @@ def test_scratch_cnn_forward_shape():
         dropout=0.0,
     )
     x = torch.randn(4, 3, 128, 128)
-    out = model(x)
+    model.eval()
+    with torch.no_grad():
+        out = model(x)
     assert out.shape == (4, num_classes)
 
 
 def test_resnet18_forward_shape_no_pretrain():
     num_classes = 39
-    # pretrained=False so the test does not try to download weights
     model = ResNet18Classifier(
         num_classes=num_classes, pretrained=False, dropout=0.0, train_backbone=True
     )
     x = torch.randn(2, 3, 224, 224)
-    out = model(x)
+    model.eval()
+    with torch.no_grad():
+        out = model(x)
+
     assert out.shape == (2, num_classes)
