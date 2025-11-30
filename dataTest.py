@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from clearml import Task, Logger
-from data.dataset import load_dataset_and_dataloaders, class_names, show_batch
+from data.dataset import load_dataset_and_dataloaders, show_batch
 
 # -----------------------------
 # CREATE CLEARML TASK
@@ -19,7 +19,7 @@ task = Task.init(
 # -----------------------------
 SELECTED_DATASET = "medium"  # Options: 'tiny', 'medium', 'large'
 
-train_loader, val_loader, test_loader = load_dataset_and_dataloaders(dataset_size=SELECTED_DATASET)
+train_loader, val_loader, test_loader, class_names = load_dataset_and_dataloaders(dataset_size=SELECTED_DATASET)
 
 # -----------------------------
 # DEFINE SIMPLE CNN
