@@ -28,6 +28,7 @@ class TestDataSplittingReproducibility:
         # Create synthetic dataset with 100 samples and 5 classes
         n_samples = 100
         n_classes = 5
+        np.random.seed(0)  # Ensure deterministic test data
         labels = np.random.randint(0, n_classes, n_samples)
         
         # Generate splits with same seed - should be identical
@@ -55,6 +56,7 @@ class TestDataSplittingReproducibility:
         # Create synthetic dataset
         n_samples = 100
         n_classes = 5
+        np.random.seed(1)  # Ensure deterministic test data
         labels = np.random.randint(0, n_classes, n_samples)
         
         # Generate splits with different seeds - should be different
