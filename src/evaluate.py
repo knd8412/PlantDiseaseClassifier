@@ -17,12 +17,11 @@ Error Gallery Options:
 import argparse
 import json
 import os
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Callable, Any
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from sklearn.metrics import confusion_matrix, classification_report, precision_recall_fscore_support
-from sklearn.preprocessing import label_binarize
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datasets import load_dataset
@@ -42,7 +41,7 @@ except ImportError:
     from models.convnet_scratch import build_model
     from clearml_utils import init_task, log_scalar, log_image
 
-class HFDataset:
+class HFDataset(Dataset):
     """
     Dataset wrapper for Hugging Face splits, used for evaluation.
 
@@ -55,7 +54,7 @@ class HFDataset:
         - Handles different possible image and label key formats (e.g., "image" or "img" for images, "label" or "labels" for labels).
         - Extracts label_names from dataset features if available, which is useful for generating human-readable reports and confusion matrices.
     """
-    def __init__(self, hf_split, transform):
+    def __init__(self, hf_split: Any, transform: Callable) -> None:
         self.hf_split = hf_split
         self.transform = transform
         
@@ -83,11 +82,16 @@ class HFDataset:
                 elif hasattr(feature, "_int2str") and callable(feature._int2str):
                     # Handle ClassLabel.int2str mapping
                     try:
-                        num_classes = len(hf_split)
-                        label_names = [feature._int2str(i) for i in range(num_classes)]
-                        print(f"[DEBUG] Extracted label names using _int2str from '{key}': {label_names}")
-                        return label_names
-                    except (IndexError, ValueError):
+                        # Get num_classes from the feature's num_classes attribute, not dataset length
+                        num_classes = getattr(feature, 'num_classes', None)
+                        if num_classes is None:
+                            # Fallback: try to determine from feature length or names
+                            num_classes = len(getattr(feature, 'names', [])) or len(getattr(feature, '_str2int', {}))
+                        if num_classes > 0:
+                            label_names = [feature._int2str(i) for i in range(num_classes)]
+                            print(f"[DEBUG] Extracted label names using _int2str from '{key}': {label_names}")
+                            return label_names
+                    except (IndexError, ValueError, TypeError):
                         continue
                 elif hasattr(feature, "names") and isinstance(feature.names, list):
                     label_names = feature.names
@@ -155,9 +159,8 @@ class HFDataset:
                 try:
                     return int(sample[key])
                 except (ValueError, TypeError):
-                    # If not integer, try to handle string labels
-                    if isinstance(sample[key], str):
-                        return hash(sample[key]) % 1000  # Simple hash for string labels
+                    # String labels should be handled by the dataset's label encoding
+                    # Don't use hash() as it's not deterministic across Python runs
                     continue
         
         return None
@@ -168,6 +171,8 @@ class HFDataset:
     def __getitem__(self, idx):
         sample = self.hf_split[idx]
         img = sample.get("image", None) or sample.get("img", None)
+        if img is None:
+            raise ValueError(f"Sample {idx} does not contain 'image' or 'img' key. Available keys: {list(sample.keys())}")
         if not isinstance(img, Image.Image):
             img = Image.fromarray(np.array(img))
         x = self.transform(img)
@@ -292,11 +297,11 @@ def evaluate_model(model: torch.nn.Module, loader: DataLoader, device: torch.dev
         "logits": logits
     }
 
-def plot_confusion_matrix(cm: np.ndarray, class_names: List[str] = None, save_path: str = "confusion_matrix.png"):
+def plot_confusion_matrix(cm: np.ndarray, class_names: Optional[List[str]] = None, save_path: str = "confusion_matrix.png"):
     """Save a confusion matrix heatmap"""
     plt.figure(figsize=(10, 8))
     if class_names is None:
-        labels = list(range(cm.shape[0]))
+        labels = [str(i) for i in range(cm.shape[0])]  # Convert to strings for seaborn
     else:
         labels = class_names
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels)
@@ -337,17 +342,24 @@ def collect_misclassified_samples(predictions: np.ndarray, targets: np.ndarray,
     # Limit to max_samples
     return misclassified_indices[:max_samples]
 
-def plot_confusion_grid(hf_split, misclassified_indices: List[int],
+def plot_confusion_grid(hf_split: Any, misclassified_indices: List[int],
                        true_class: int, predicted_class: int,
                        label_names: List[str], save_path: str,
-                       grid_size: tuple = (5, 2)):
+                       grid_size: Optional[Tuple[int, int]] = None) -> None:
     """Generate image grid for misclassified samples"""
     num_samples = len(misclassified_indices)
     if num_samples == 0:
         print(f"[WARNING] No misclassified samples found for true_class={true_class}, predicted_class={predicted_class}")
         return
     
-    fig, axes = plt.subplots(grid_size[0], grid_size[1], figsize=(12, 15))
+    # Compute grid size dynamically based on number of samples
+    if grid_size is None:
+        cols = 2
+        rows = (num_samples + cols - 1) // cols  # Ceiling division
+        rows = max(1, rows)  # At least 1 row
+        grid_size = (rows, cols)
+    
+    fig, axes = plt.subplots(grid_size[0], grid_size[1], figsize=(12, 3 * grid_size[0]))
     fig.suptitle(f"Confusion: {label_names[true_class]} -> {label_names[predicted_class]}", fontsize=16)
     
     for i, idx in enumerate(misclassified_indices):
@@ -356,7 +368,15 @@ def plot_confusion_grid(hf_split, misclassified_indices: List[int],
             
         row = i // grid_size[1]
         col = i % grid_size[1]
-        ax = axes[row, col]
+        # Handle single row/column case where axes isn't 2D
+        if grid_size[0] == 1 and grid_size[1] == 1:
+            ax = axes
+        elif grid_size[0] == 1:
+            ax = axes[col]
+        elif grid_size[1] == 1:
+            ax = axes[row]
+        else:
+            ax = axes[row, col]
         
         # Get original image from dataset
         sample = hf_split[idx]
@@ -372,7 +392,15 @@ def plot_confusion_grid(hf_split, misclassified_indices: List[int],
     for i in range(len(misclassified_indices), grid_size[0] * grid_size[1]):
         row = i // grid_size[1]
         col = i % grid_size[1]
-        axes[row, col].axis('off')
+        if grid_size[0] == 1 and grid_size[1] == 1:
+            ax = axes
+        elif grid_size[0] == 1:
+            ax = axes[col]
+        elif grid_size[1] == 1:
+            ax = axes[row]
+        else:
+            ax = axes[row, col]
+        ax.axis('off')
     
     plt.tight_layout()
     plt.savefig(save_path)
@@ -503,7 +531,8 @@ def main():
     parser.add_argument("--config", default="configs/train.yaml", help="Path to train config yaml")
     parser.add_argument("--split", default="val", help="Dataset split to evaluate (e.g., val, test)")
     parser.add_argument("--output", default="outputs/eval_results.json", help="Path to save evaluation results")
-    parser.add_argument("--error-gallery", action="store_true", default=True, help="Generate error gallery with misclassified samples")
+    parser.add_argument("--no-error-gallery", dest="error_gallery", action="store_false", help="Disable error gallery generation")
+    parser.set_defaults(error_gallery=True)
     parser.add_argument("--gallery-top-pairs", type=int, default=5, help="Number of worst confusion pairs to analyze")
     parser.add_argument("--gallery-samples-per-pair", type=int, default=10, help="Number of misclassified samples per confusion pair")
     args = parser.parse_args()
@@ -579,9 +608,10 @@ def main():
     
     # Generate confusion matrix
     print("[Evaluation] Generating confusion matrix...")
+    cm_save_path = os.path.join(os.path.dirname(args.output) or "outputs", "confusion_matrix.png")
     plot_confusion_matrix(results['confusion_matrix'],
                          class_names=results['label_names'],
-                         save_path="confusion_matrix.png")
+                         save_path=cm_save_path)
     
     # Save results
     print(f"[Evaluation] Saving results to {args.output}")
@@ -627,7 +657,7 @@ def main():
     if task:
         log_scalar(task, "accuracy", "overall", results["overall_accuracy"], 0)
         log_scalar(task, "accuracy", "top5", results["top5_accuracy"], 0)
-        log_image(task, "confusion_matrix", "confusion_matrix.png")
+        log_image(task, "confusion_matrix", cm_save_path)
         
         # Log error gallery images to ClearML
         if args.error_gallery:

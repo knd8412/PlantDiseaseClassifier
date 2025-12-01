@@ -40,7 +40,6 @@ python evaluate.py --model outputs/best.pt --split val
 ### Advanced Options
 ```bash
 python evaluate.py --model outputs/best.pt --split val \
-    --error-gallery \
     --gallery-top-pairs 5 \
     --gallery-samples-per-pair 10
 ```
@@ -66,12 +65,12 @@ errors/
 
 ## File Descriptions
 
-### [`confusion_pair_X_Y/grid.png`](src/evaluate.py:348)
+### `confusion_pair_X_Y/grid.png`
 - Visual grid showing misclassified samples
 - Each image labeled with sample index
 - Title shows confusion pattern (True → Predicted)
 
-### [`confusion_pair_X_Y/samples.json`](src/evaluate.py:422)
+### `confusion_pair_X_Y/samples.json`
 ```json
 {
   "true_class": 0,
@@ -83,7 +82,7 @@ errors/
 }
 ```
 
-### [`error_analysis.md`](src/evaluate.py:453)
+### `error_analysis.md`
 - **Automated Framework**: Overview of evaluation metrics and confusion statistics
 - **Manual Pattern Analysis**: Checklist placeholders for human observation completion
 - **Pattern Observations**: Designed for manual completion after visual inspection
@@ -103,7 +102,7 @@ errors/
 2. Examine image grids visually
 3. Manually fill in observed patterns in the markdown report
 
-### [`gallery_config.json`](src/evaluate.py:447)
+### `gallery_config.json`
 ```json
 {
   "top_pairs": 5,
@@ -125,40 +124,40 @@ errors/
 
 ### Key Functions
 
-#### [`identify_worst_confusion_pairs()`](src/evaluate.py:296)
+#### `identify_worst_confusion_pairs()`
 - Analyzes confusion matrix to find largest off-diagonal values
 - Returns sorted list of (true_class, predicted_class, count) tuples
 
-#### [`collect_misclassified_samples()`](src/evaluate.py:312)
+#### `collect_misclassified_samples()`
 - Finds actual misclassified samples for a specific confusion pair
 - Returns list of sample indices
 
-#### [`plot_confusion_grid()`](src/evaluate.py:328)
+#### `plot_confusion_grid()`
 - Generates matplotlib subplot grid with misclassified images
 - Handles variable grid sizes and empty subplots
 
-#### [`generate_error_gallery()`](src/evaluate.py:375)
+#### `generate_error_gallery()`
 - Orchestrates the entire error gallery generation process
 - Creates directory structure and coordinates function calls
 
-#### [`save_error_analysis()`](src/evaluate.py:453)
+#### `save_error_analysis()`
 - Generates comprehensive markdown analysis
 - Provides pattern observations and recommendations
 
 ### Integration Points
 
-#### Modified [`evaluate_model()`](src/evaluate.py:232)
+#### Modified `evaluate_model()`
 - Now returns additional data: predictions, targets, logits
 - Enables error gallery generation with complete information
 
-#### Enhanced [`main()`](src/evaluate.py:298)
+#### Enhanced `main()`
 - Added error gallery command-line arguments
 - Integrated error gallery generation into evaluation flow
 - Added ClearML logging for error gallery artifacts
 
 ## Testing
 
-The implementation has been tested with [`test_error_gallery.py`](test_error_gallery.py:1) which verifies:
+The implementation has been tested with `test_error_gallery.py` which verifies:
 - Function imports and basic functionality
 - Error gallery generation with mock data
 - File structure creation and cleanup
