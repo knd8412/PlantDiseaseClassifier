@@ -4,20 +4,20 @@ import json
 import random
 from dataclasses import dataclass
 from typing import List
-import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import yaml
+
 from .models.convnet_scratch import build_model
 from .clearml_utils import init_task, log_scalar, upload_model
 from data.dataset import load_dataset_and_dataloaders
 
 
-
 # ----------------------------------------------------------------------
-# Config dataclass
+# Config dataclass (supports both `data` and `dataset` in YAML)
 # ----------------------------------------------------------------------
 @dataclass
 class Config:
@@ -30,6 +30,7 @@ class Config:
     model: dict
     train: dict
     clearml: dict
+    dataset: dict | None = None
 
 
 # ----------------------------------------------------------------------
@@ -60,7 +61,6 @@ class EarlyStopping:
 # ----------------------------------------------------------------------
 def set_seed(seed: int):
     random.seed(seed)
-    np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
@@ -76,19 +76,15 @@ def _unpack_batch(batch, device):
     """
     Unpack a batch coming from the DataLoader.
     New behaviour (dataset manager update):
-      - MultiModalityDataset now returns a tuple, typically:
+      - DataLoader now yields tuples, typically:
           (images, labels) or (images, labels, extra_info)
     """
-    # New preferred path: tuple/list
     if isinstance(batch, (list, tuple)):
         if len(batch) < 2:
             raise ValueError(f"Expected at least 2 elements in batch, got {len(batch)}")
-        # First two elements are always (inputs, labels); ignore any extras
         xb, yb = batch[0], batch[1]
     else:
-        raise TypeError(
-            f"Expected batch to be tuple/list got {type(batch)}"
-        )
+        raise TypeError(f"Expected batch to be tuple/list, got {type(batch)}")
 
     return xb.to(device), yb.to(device)
 
@@ -140,19 +136,27 @@ def main():
 
     with open(config_path, "r") as f:
         cfg_dict = yaml.safe_load(f)
+
+    # Build Config (now aware of top-level `dataset:`)
     cfg = Config(**cfg_dict)
 
+    # We'll mostly read dataset options from `data:` (as your YAML does)
+    data_cfg = cfg.data
+
+    # ------------------------------------------------------------------
     # ClearML task
+    # ------------------------------------------------------------------
+    clearml_cfg = cfg.clearml or {}
     task = init_task(
-        enabled=cfg.clearml["enabled"],
-        project=cfg.clearml.get("project") or cfg.project_name,
-        task_name=cfg.clearml.get("task_name") or cfg.task_name,
+        enabled=clearml_cfg.get("enabled", False),
+        project=clearml_cfg.get("project") or cfg.project_name,
+        task_name=clearml_cfg.get("task_name") or cfg.task_name,
         tags=cfg.tags,
         params=cfg_dict,
     )
 
     # If configured, send this task to a remote ClearML queue and stop local execution
-    remote_queue = cfg.clearml.get("queue")
+    remote_queue = clearml_cfg.get("queue")
     if task is not None and remote_queue:
         try:
             from clearml import Task as ClearMLTask
@@ -171,10 +175,9 @@ def main():
     os.makedirs("outputs", exist_ok=True)
 
     # ------------------------------------------------------------------
-    # DATA LOADING
+    # DATA LOADING (via dataset.py helper)
     # ------------------------------------------------------------------
-
-    subset_key = cfg.data.get("clearml_subset", "medium")
+    subset_key = data_cfg.get("clearml_subset", "tiny")
 
     train_loader, val_loader, test_loader, class_names = load_dataset_and_dataloaders(
         dataset_size=subset_key,
@@ -190,7 +193,7 @@ def main():
         num_classes=num_classes,
         channels=cfg.model["channels"],
         regularisation=cfg.model["regularisation"],  # "none" | "dropout" | "batchnorm"
-        dropout=cfg.model["dropout"],  # used when regularisation == "dropout"
+        dropout=cfg.model["dropout"],               # used when regularisation == "dropout"
     ).to(device)
 
     # Loss & Optimizer
