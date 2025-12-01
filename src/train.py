@@ -18,6 +18,16 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
+try:
+    from .clearml_utils import init_task, log_scalar, upload_model
+    from .models.convnet_scratch import build_model as build_scratch_model
+    from .models.resnet import ResNet18Classifier
+except ImportError:
+    # Fallback for direct script execution
+    from src.clearml_utils import init_task, log_scalar, upload_model
+    from src.models.convnet_scratch import build_model as build_scratch_model
+    from src.models.resnet import ResNet18Classifier
+
 from data.dataset import MultiModalityDataset
 from data.transforms import get_transforms
 from data.utils import (
@@ -26,10 +36,6 @@ from data.utils import (
     gather_samples,
     split_dataset,
 )
-
-from .clearml_utils import init_task, log_scalar, upload_model
-from .models.convnet_scratch import build_model as build_scratch_model
-from .models.resnet import ResNet18Classifier
 
 
 @dataclass
