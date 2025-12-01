@@ -1,0 +1,76 @@
+seed: 42
+project_name: "PlantVillage-Baseline"
+task_name: "scratch-cnn-baseline"
+tags: ["baseline", "scratch", "subset25"]
+device: "cuda"
+
+dataset:
+  ids:
+    tiny:   "e1277db0a8a445d9b6faa1f3947c1fe0"   # 5% subset
+    medium: "428add6db5904f48a46c7eb9888b5820"   # 30% subset
+    large:  "f4c194815a6d4b849fd9eba04645a39e"   # 100% subset
+
+
+data:
+  source: "clearml"
+  clearml_subset: "large"
+  dataset_name: "DScomp380/plant_village"
+  data_dir: "/kaggle/input/plantvillage-dataset"  # Change to your path
+  modalities: ["color", "grayscale", "segmented"]
+  image_size: 256
+  subset_fraction: 0.25
+  val_size: 0.15
+  test_size: 0.15
+  num_workers: 4
+  normalize: true
+  augment: true  
+  # Class imbalance handling
+  balance_strategy: null  # Options: null, "uniform", "weighted_sampler", "weighted_loss", "hybrid"
+  # - null: no balancing
+  # - "uniform": downsample all classes to smallest class size
+  # - "weighted_sampler": use WeightedRandomSampler during training
+  # - "weighted_loss": use class weights in loss function
+  # - "hybrid": combine sampling and loss weighting
+  # NOT IMPLEMENTED YET
+  
+  # Strategy-specific configuration
+  balance_config:
+    # For uniform sampling
+    seed: 42
+    
+    # For weighted sampler
+    replacement: true
+    
+    # For weighted loss
+    weight_power: 1.0  # Power to apply to weights (1.0 = no change, <1.0 = softer, >1.0 = stronger)
+    
+    # For hybrid strategy
+    sampling_strategy: "none"  # "none", "uniform", or "weighted"
+    use_weighted_loss: true
+
+model:
+  num_classes: 39
+  channels: [32, 64, 128]    # conv blocks widths
+  regularisation: "none"      # "none" | "dropout" | "batchnorm"
+  dropout: 0.2                # used when regularisation == "dropout"
+
+train:
+  epochs: 30
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 0.001
+  weight_decay: 0.0001
+
+  patience: 3                 # early stopping patience
+  min_delta: 0.0              # minimum improvement in val metric to reset patience
+
+  scheduler:
+    type: "cosine"            # cosine annealing LR schedule
+    T_max: 30                 # usually = epochs
+
+clearml:
+  enabled: true
+  project: "KCL-PlantVillage"
+  task_name: "baseline-scratch"
+  output_uri: null
+  queue: "default"
