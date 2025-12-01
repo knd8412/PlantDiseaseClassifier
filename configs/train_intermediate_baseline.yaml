@@ -1,0 +1,42 @@
+seed: 42
+project_name: "PlantVillage-Baseline"
+task_name: "convnet_baseline_intermediate"
+tags: ["intermediate", "scratch", "baseline"]
+device: "cuda"
+
+data:
+  dataset_name: "DScomp380/plant_village"
+  image_size: 256
+  subset_fraction: 0.25        # intermediate dataset (25%)
+  val_size: 0.15
+  test_size: 0.15
+  num_workers: 4
+  normalize: true
+  augment: false
+
+model:
+  num_classes: 39
+  channels: [32, 64, 128]
+  regularisation: "none"       # <-- baseline: no BN, no dropout
+  dropout: 0.0                 # ignored in "none" mode
+
+train:
+  epochs: 30
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 0.001
+  weight_decay: 0.0001
+
+  patience: 3
+  min_delta: 0.0
+
+  scheduler:
+    type: "cosine"
+    T_max: 30
+
+clearml:
+  enabled: true
+  project: "KCL-PlantVillage"
+  task_name: "convnet_baseline_intermediate"
+  output_uri: null
+  queue: "default"
