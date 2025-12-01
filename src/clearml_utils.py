@@ -23,6 +23,14 @@ def log_scalar(task, title: str, series: str, value: float, step: int):
     except Exception as e:
         print(f"[ClearML] log_scalar error: {e}")
 
+def log_figure(task, title: str, series: str, figure, step: int = 0):
+    if task is None:
+        return
+    try:
+        task.get_logger().report_matplotlib_figure(title=title, series=series, figure=figure, iteration=step)
+    except Exception as e:
+        print(f"[ClearML] log_figure error: {e}")
+
 def upload_model(task, local_path: str, name: str = "best.pt"):
     if task is None:
         return
