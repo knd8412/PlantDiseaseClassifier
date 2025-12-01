@@ -4,33 +4,16 @@ import json
 import random
 from dataclasses import dataclass
 from typing import List
-
 import numpy as np
-from sklearn.model_selection import StratifiedShuffleSplit
-
 import torch
-from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from tqdm import tqdm
 import yaml
-from datasets import load_dataset
-from PIL import Image
-
 from .models.convnet_scratch import build_model
 from .clearml_utils import init_task, log_scalar, upload_model
+from data.dataset import load_dataset_and_dataloaders
 
-from clearml import Dataset as ClearMLDataset
-
-from data.transforms import get_transforms
-from data.dataset import MultiModalityDataset
-from data.utils import (
-    build_class_mapping,
-    gather_samples,
-    split_dataset,
-    ensure_dataset_extracted,
-)
 
 
 # ----------------------------------------------------------------------
@@ -73,36 +56,6 @@ class EarlyStopping:
 
 
 # ----------------------------------------------------------------------
-# HF dataset wrapper (legacy path)
-# ----------------------------------------------------------------------
-class HFDataset(Dataset):
-    def __init__(self, hf_split, transform):
-        self.hf_split = hf_split
-        self.transform = transform
-
-        # Extract label names from features (if present)
-        self.label_names = None
-        if "labels" in hf_split.features and hasattr(
-            hf_split.features["labels"], "names"
-        ):
-            self.label_names = hf_split.features["labels"].names
-
-    def __len__(self):
-        return len(self.hf_split)
-
-    def __getitem__(self, idx):
-        sample = self.hf_split[idx]
-        # PlantVillage sometimes stores images under 'image' or 'img'
-        img = sample.get("image", None) or sample.get("img", None)
-        if not isinstance(img, Image.Image):
-            # images may be in array format
-            img = Image.fromarray(np.array(img))
-        x = self.transform(img)
-        y = sample["label"] if "label" in sample else sample.get("labels")
-        return x, int(y)
-
-
-# ----------------------------------------------------------------------
 # Utils
 # ----------------------------------------------------------------------
 def set_seed(seed: int):
@@ -114,19 +67,6 @@ def set_seed(seed: int):
     torch.backends.cudnn.benchmark = False
 
 
-def stratified_split(dataset, labels, val_size=0.15, test_size=0.15, seed=42):
-    y = np.array(labels)
-    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
-    idx = np.arange(len(y))
-    train_val_idx, test_idx = next(sss1.split(idx, y))
-    y_train_val = y[train_val_idx]
-    sss2 = StratifiedShuffleSplit(
-        n_splits=1, test_size=val_size / (1.0 - test_size), random_state=seed
-    )
-    train_idx, val_idx = next(sss2.split(train_val_idx, y_train_val))
-    return train_val_idx[train_idx], train_val_idx[val_idx], test_idx
-
-
 def accuracy(logits, targets):
     preds = torch.argmax(logits, dim=1)
     return (preds == targets).float().mean().item()
@@ -134,20 +74,21 @@ def accuracy(logits, targets):
 
 def _unpack_batch(batch, device):
     """
-    Handle MultiModalityDataset batches that return dictionaries.
-    Extracts image and label from the batch dict.
+    Unpack a batch coming from the DataLoader.
+    New behaviour (dataset manager update):
+      - MultiModalityDataset now returns a tuple, typically:
+          (images, labels) or (images, labels, extra_info)
     """
-    if isinstance(batch, dict):
-        # MultiModalityDataset returns dict with 'image', 'label', 'modality'
-        xb = batch["image"]
-        yb = batch["label"]
-    elif isinstance(batch, (list, tuple)):
-        # Fallback for simple datasets that return tuples
+    # New preferred path: tuple/list
+    if isinstance(batch, (list, tuple)):
         if len(batch) < 2:
             raise ValueError(f"Expected at least 2 elements in batch, got {len(batch)}")
+        # First two elements are always (inputs, labels); ignore any extras
         xb, yb = batch[0], batch[1]
     else:
-        raise ValueError(f"Expected batch to be dict, tuple, or list, got {type(batch)}")
+        raise TypeError(
+            f"Expected batch to be tuple/list got {type(batch)}"
+        )
 
     return xb.to(device), yb.to(device)
 
@@ -192,6 +133,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/train.yaml")
     args = parser.parse_args()
+
     # Fix Windows backslashes so Linux worker can read the path
     config_path = args.config.replace("\\", "/")
     print(f"[Config] Using config file: {config_path}")
@@ -221,6 +163,7 @@ def main():
         except Exception as e:
             print(f"[ClearML] execute_remotely failed ({e}), continuing locally.")
 
+    # Seed + device
     set_seed(cfg.seed)
     device = torch.device(
         cfg.device if torch.cuda.is_available() and cfg.device == "cuda" else "cpu"
@@ -228,184 +171,17 @@ def main():
     os.makedirs("outputs", exist_ok=True)
 
     # ------------------------------------------------------------------
-    # DATA LOADING: HF (legacy) vs ClearML (new)
+    # DATA LOADING
     # ------------------------------------------------------------------
-    data_source = cfg.data.get("source", "hf")
 
-    # ---------------- HF PATH (LEGACY / OPTIONAL) ----------------
-    if data_source == "hf":
-        print("[Data] Loading HF dataset:", cfg.data["dataset_name"])
-        ds = load_dataset(cfg.data["dataset_name"])
+    subset_key = cfg.data.get("clearml_subset", "medium")
 
-        split_name = "train" if "train" in ds else list(ds.keys())[0]
-        full = ds[split_name]
-
-        # Optional subset for fast iteration
-        if cfg.data.get("subset_fraction", 1.0) < 1.0:
-            n = int(len(full) * cfg.data["subset_fraction"])
-            full = full.shuffle(seed=cfg.seed).select(range(n))
-            print(f"[Data] Using subset: {n} samples")
-
-        labels = [
-            int(item.get("label") if "label" in item else item.get("labels"))
-            for item in full
-        ]
-        num_classes = len(set(labels))
-        print(f"[Data] Classes: {num_classes}, Samples: {len(full)}")
-
-        # Stratified split
-        train_idx, val_idx, test_idx = stratified_split(
-            full,
-            labels,
-            cfg.data["val_size"],
-            cfg.data["test_size"],
-            seed=cfg.seed,
-        )
-        train_hf = full.select(train_idx.tolist())
-        val_hf = full.select(val_idx.tolist())
-        test_hf = full.select(test_idx.tolist())
-
-        # Transforms - get_transforms returns dict of modality-specific transforms
-        train_transforms = get_transforms(
-            image_size=cfg.data["image_size"],
-            train=True,
-            normalize=cfg.data["normalize"],
-            augment=cfg.data["augment"],
-        )
-        eval_transforms = get_transforms(
-            image_size=cfg.data["image_size"],
-            train=False,
-            normalize=cfg.data["normalize"],
-            augment=False,
-        )
-
-        # Use only color modality for HF dataset
-        train_tf = train_transforms["color"]
-        eval_tf = eval_transforms["color"]
-
-        train_ds = HFDataset(train_hf, transform=train_tf)
-        val_ds = HFDataset(val_hf, transform=eval_tf)
-        test_ds = HFDataset(test_hf, transform=eval_tf)
-
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=cfg.train["batch_size"],
-            shuffle=True,
-            num_workers=cfg.data["num_workers"],
-            pin_memory=True,
-        )
-        val_loader = DataLoader(
-            val_ds,
-            batch_size=cfg.train["batch_size"],
-            shuffle=False,
-            num_workers=cfg.data["num_workers"],
-            pin_memory=True,
-        )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=cfg.train["batch_size"],
-            shuffle=False,
-            num_workers=cfg.data["num_workers"],
-            pin_memory=True,
-        )
-
-    # ---------------- CLEARML PATH (COURSEWORK) ----------------
-    else:
-        print("[Data] Using ClearML dataset pipeline")
-
-        # 1) Choose which subset to use
-        DATASET_IDS = {
-            "tiny": "e1277db0a8a445d9b6faa1f3947c1fe0",   # ~5%
-            "medium": "ee3e7d7e511a47449f7206809eced7c1",  # ~30%
-            "large": "a20b80fd8e85450d9db29dc867a13c3e",   # ~60%
-        }
-        subset_key = cfg.data.get("clearml_subset", "tiny")
-        dataset_id = DATASET_IDS[subset_key]
-
-        print(f"[Data] Fetching ClearML Dataset '{subset_key}' ({dataset_id})")
-        cl_dataset = ClearMLDataset.get(dataset_id)
-        raw_path = cl_dataset.get_local_copy()
-        print(f"[Data] Raw dataset path: {raw_path}")
-
-        # Use the helper from data.utils, same as demo notebook
-        local_path = ensure_dataset_extracted(raw_path)
-        print(f"[Data] Final dataset root: {local_path}")
-
-        # 2) Build class mapping & sample list
-        modalities = cfg.data.get("modalities", ["color"])
-        class_names, class_to_idx = build_class_mapping(local_path, modality="color")
-        num_classes = len(class_names)
-        print(f"[Data] Found {num_classes} classes")
-
-        samples = gather_samples(local_path, modalities, class_to_idx)
-        print(f"[Data] Total samples in '{subset_key}' subset: {len(samples)}")
-
-        # 3) Split into train / val / test
-        train_samples, val_samples, test_samples = split_dataset(
-            samples,
-            test_size=cfg.data["test_size"],
-            val_size=cfg.data["val_size"],
-            random_state=cfg.seed,
-        )
-        print(
-            f"[Data] Split sizes: "
-            f"Train={len(train_samples)}, Val={len(val_samples)}, Test={len(test_samples)}"
-        )
-
-        # 4) Transforms & datasets
-        img_size = cfg.data["image_size"]
-        normalize = cfg.data["normalize"]
-        augment = cfg.data["augment"]
-
-        # Get transforms - returns dict of modality-specific transforms
-        train_transforms = get_transforms(
-            image_size=img_size,
-            train=True,
-            normalize=normalize,
-            augment=augment,
-        )
-        eval_transforms = get_transforms(
-            image_size=img_size,
-            train=False,
-            normalize=normalize,
-            augment=False,
-        )
-
-        # MultiModalityDataset expects modality_transforms parameter
-        train_ds = MultiModalityDataset(
-            train_samples, modality_transforms=train_transforms
-        )
-        val_ds = MultiModalityDataset(
-            val_samples, modality_transforms=eval_transforms
-        )
-        test_ds = MultiModalityDataset(
-            test_samples, modality_transforms=eval_transforms
-        )
-
-        # 5) DataLoaders
-        train_loader = DataLoader(
-            train_ds,
-            batch_size=cfg.train["batch_size"],
-            shuffle=True,
-            num_workers=cfg.data["num_workers"],
-            pin_memory=True,
-        )
-        val_loader = DataLoader(
-            val_ds,
-            batch_size=cfg.train["batch_size"],
-            shuffle=False,
-            num_workers=cfg.data["num_workers"],
-            pin_memory=True,
-        )
-        test_loader = DataLoader(
-            test_ds,
-            batch_size=cfg.train["batch_size"],
-            shuffle=False,
-            num_workers=cfg.data["num_workers"],
-            pin_memory=True,
-        )
-
-        print("[Data] Dataloaders ready.")
+    train_loader, val_loader, test_loader, class_names = load_dataset_and_dataloaders(
+        dataset_size=subset_key,
+        config_path=config_path,
+    )
+    num_classes = len(class_names)
+    print(f"[Data] num_classes = {num_classes}")
 
     # ------------------------------------------------------------------
     # MODEL
