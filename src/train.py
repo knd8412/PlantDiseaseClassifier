@@ -1,11 +1,16 @@
 import argparse
+import sys
+import os
 import yaml
 import torch
 
-from .utils import Config, set_seed
-from .models.convnet_scratch import build_model
-from .clearml_utils import init_task
-from .trainer import Trainer
+# Ensure parent directory is in path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from src.utils import Config, set_seed
+from src.models.convnet_scratch import build_model
+from src.clearml_utils import init_task
+from src.trainer import Trainer
 from data.dataset import load_dataset_and_dataloaders
 
 def main():
