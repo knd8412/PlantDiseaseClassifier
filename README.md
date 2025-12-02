@@ -83,6 +83,11 @@ The project includes a comprehensive evaluation script that provides detailed me
 python src/evaluate.py --model outputs/best.pt --split val
 ```
 
+> **Important:** The `--config` must match the architecture used to train the model. If you trained with `configs/train_quick_test.yaml`, use that same config for evaluation:
+> ```bash
+> python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
+> ```
+
 This command generates:
 - **Overall accuracy** and **top-5 accuracy** metrics
 - **Per-class precision, recall, and F1 scores**
