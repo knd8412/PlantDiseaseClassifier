@@ -80,27 +80,36 @@ The project includes a comprehensive evaluation script that provides detailed me
 
 **Dataset:** The PlantVillage dataset downloads automatically on first run and is cached locally (~/.cache/huggingface/datasets/). Subsequent runs use the cached version.
 
-### ⚠️ IMPORTANT: Config Must Match Training!
+### Architecture Auto-Detection
 
-The most common error when running evaluation is a **model weight mismatch** caused by using the wrong config file. The `--config` flag **must** point to the same config used during training.
+The evaluation script automatically detects the model architecture using a 3-step fallback:
+
+1. **Checkpoint metadata** — If the checkpoint was saved by the updated `train.py`, it contains embedded `model_config`
+2. **Auto-inference** — Analyzes state_dict weight shapes and key patterns to determine architecture (ConvNet vs ResNet18)
+3. **Config file fallback** — Uses `--config` or default `configs/train.yaml` as last resort
+
+This means `--config` is now **optional** for most checkpoints!
 
 ```bash
-# ✅ CORRECT: Use the same config as training
-python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
+# ✅ Just specify the model - architecture is auto-detected
+python src/evaluate.py --model outputs/best.pt --split val
 
-# ❌ WRONG: Using default config when model was trained with different config
-python src/evaluate.py --model outputs/best.pt --split val  # Uses configs/train.yaml by default!
+# ✅ Works with any architecture (ConvNet, ResNet18, etc.)
+python src/evaluate.py --model outputs/resnet18_best.pt --split val
+
+# Optional: Override with specific config if needed
+python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
 ```
 
 **Tip:** Use `--dry-run` to validate your setup before running full evaluation:
 ```bash
-python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --dry-run
+python src/evaluate.py --model outputs/best.pt --dry-run
 ```
 
 ### Usage
 
 ```bash
-# Evaluate a model (uses configs/train.yaml by default)
+# Evaluate a model (auto-detects architecture)
 python src/evaluate.py --model outputs/best.pt --split val
 
 # Evaluate on test set
@@ -109,18 +118,6 @@ python src/evaluate.py --model outputs/best.pt --split test
 # Skip error gallery for faster evaluation
 python src/evaluate.py --model outputs/best.pt --split val --no-error-gallery
 ```
-
-> ⚠️ **Config must match model architecture!**  
-> The `--config` flag must point to the same config used during training.  
-> Using the wrong config will cause a model weight mismatch error.
->
-> ```bash
-> # If trained with train_quick_test.yaml:
-> python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
->
-> # If trained with train.yaml (default):
-> python src/evaluate.py --model outputs/best.pt --config configs/train.yaml --split val
-> ```
 
 ### What it generates
 - **Overall accuracy** and **top-5 accuracy** metrics
@@ -146,7 +143,7 @@ The error gallery generates:
 For detailed documentation on the error gallery functionality, see [`ERROR_GALLERY_README.md`](ERROR_GALLERY_README.md).
 
 ### Advanced Options
-- `--config`: Specify alternative configuration file (default: `configs/train.yaml`)
+- `--config`: Override auto-detected config (optional - only needed for old checkpoints)
 - `--output`: Custom path for results JSON file
 - `--gallery-top-pairs`: Number of worst confusion pairs to analyze
 - `--gallery-samples-per-pair`: Number of misclassified samples per confusion pair

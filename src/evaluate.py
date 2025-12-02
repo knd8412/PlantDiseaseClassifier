@@ -5,28 +5,35 @@ Calculates overall accuracy, top-five accuracy, per-class precision and recall,
 generates a confusion matrix visualization, and creates an error gallery with
 misclassified samples for analysis.
 
+Architecture Detection:
+    The script automatically detects the model architecture using a 3-step fallback:
+    1. Checkpoint metadata (if saved by newer train.py with 'model_config' key)
+    2. Auto-inference from state_dict weight shapes and key patterns
+    3. Config file fallback (uses --config or default configs/train.yaml)
+    
+    This means --config is now OPTIONAL for most checkpoints!
+
 Dataset:
     The PlantVillage dataset downloads automatically on first run and is cached at:
         ~/.cache/huggingface/datasets/
     Subsequent runs use the cache. If you're offline, it will use the cached version.
 
 Usage:
-    # Basic evaluation
+    # Basic evaluation (auto-detects architecture from checkpoint)
     python src/evaluate.py --model outputs/best.pt --split val
-
-    # IMPORTANT: --config must match the config used during training!
-    # Wrong config = model weight mismatch error
-    python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
 
     # Evaluate on test set
     python src/evaluate.py --model outputs/best.pt --split test
 
     # Skip error gallery for faster evaluation
     python src/evaluate.py --model outputs/best.pt --split val --no-error-gallery
+    
+    # Override with specific config (only needed for old checkpoints or edge cases)
+    python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
 
 Options:
     --model PATH                 Path to model checkpoint (required)
-    --config PATH                Config file matching training config (default: configs/train.yaml)
+    --config PATH                Config file (optional - auto-detected from checkpoint)
     --split NAME                 Dataset split to evaluate: val, test, or train (default: val)
     --output PATH                Path for results JSON (default: outputs/eval_results.json)
     --no-error-gallery           Disable error gallery generation
@@ -68,6 +75,7 @@ except ImportError:
 
 try:
     from sklearn.metrics import confusion_matrix, classification_report, precision_recall_fscore_support
+    from sklearn.model_selection import StratifiedShuffleSplit
 except ImportError:
     _MISSING_DEPS.append("scikit-learn")
 
@@ -122,14 +130,219 @@ except ImportError:
 
 # Import from relative modules when running as script
 try:
-    from .data.transforms import get_transforms
     from .models.convnet_scratch import build_model
+    from .models.resnet import ResNet18Classifier
     from .clearml_utils import init_task, log_scalar, log_image
 except ImportError:
     # Fallback for direct script execution
-    from data.transforms import get_transforms
     from models.convnet_scratch import build_model
+    from models.resnet import ResNet18Classifier
     from clearml_utils import init_task, log_scalar, log_image
+
+# Import transforms - handle both old (src/data) and new (data/) module locations
+# The root data/ module returns a dict with 'color', 'grayscale', 'segmented' keys
+# and uses 'image_size' parameter, which is what train.py uses
+import inspect
+try:
+    # Try importing from project root first (add parent dir to path if needed)
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    
+    # Now import - Python will search project root first
+    import importlib
+    transforms_module = importlib.import_module('data.transforms')
+    _get_transforms_raw = transforms_module.get_transforms
+    
+    # Check which signature we got
+    sig = inspect.signature(_get_transforms_raw)
+    if 'image_size' in sig.parameters:
+        # New signature from data/transforms.py (returns dict with 'color' key)
+        def get_transforms(image_size=224, normalize=True, augment=False):
+            result = _get_transforms_raw(image_size=image_size, train=False, normalize=normalize, augment=augment)
+            return result  # Returns dict with 'color', 'grayscale', 'segmented'
+    else:
+        # Old signature from src/data/transforms.py (returns tuple)
+        def get_transforms(image_size=256, normalize=True, augment=False):
+            train_tf, eval_tf = _get_transforms_raw(img_size=image_size, normalize=normalize, augment=augment)
+            # Wrap in dict format for compatibility
+            return {"color": eval_tf, "grayscale": eval_tf, "segmented": eval_tf}
+except Exception as e:
+    print(f"[WARNING] Could not import transforms: {e}")
+    raise
+
+
+def set_seed(seed: int):
+    """Set random seeds for reproducibility (same as training)"""
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def stratified_split(labels, val_size=0.15, test_size=0.15, seed=42):
+    """
+    Recreate the exact train/val/test splits used during training.
+    This ensures evaluation is on the same data split as training.
+    """
+    y = np.array(labels)
+    idx = np.arange(len(y))
+
+    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    train_val_idx, test_idx = next(sss1.split(idx, y))
+    y_train_val = y[train_val_idx]
+
+    sss2 = StratifiedShuffleSplit(
+        n_splits=1,
+        test_size=val_size / (1.0 - test_size),
+        random_state=seed,
+    )
+    train_idx, val_idx = next(sss2.split(train_val_idx, y_train_val))
+
+    return train_val_idx[train_idx], train_val_idx[val_idx], test_idx
+
+
+def infer_architecture_from_state_dict(state_dict: dict) -> Tuple[str, dict]:
+    """
+    Infer model architecture and configuration from checkpoint state_dict.
+    
+    This enables architecture-agnostic evaluation without needing the original
+    config file. Works by analyzing the weight tensor shapes and key patterns.
+    
+    Returns:
+        Tuple of (arch_name, model_config_dict)
+        
+    Raises:
+        ValueError if architecture cannot be determined
+    """
+    keys = list(state_dict.keys())
+    
+    # === ResNet18 Detection ===
+    # ResNet18 has keys like "model.layer1.0.conv1.weight", "model.fc.weight" or "model.fc.1.weight"
+    if any("model.layer1" in k for k in keys):
+        # Find the final classification layer to get num_classes
+        # With dropout: model.fc.1.weight (Sequential with Dropout + Linear)
+        # Without dropout: model.fc.weight (just Linear)
+        if "model.fc.1.weight" in state_dict:
+            num_classes = state_dict["model.fc.1.weight"].shape[0]
+            has_dropout = True
+        elif "model.fc.weight" in state_dict:
+            num_classes = state_dict["model.fc.weight"].shape[0]
+            has_dropout = False
+        else:
+            raise ValueError("ResNet18 detected but could not find fc layer weights")
+        
+        config = {
+            "arch": "resnet18",
+            "num_classes": num_classes,
+            "pretrained": True,  # Can't infer, assume True (common case)
+            "dropout": 0.2 if has_dropout else 0.0,  # Approximate
+            "train_backbone": True,  # Can't infer, doesn't affect eval
+        }
+        print(f"[AUTO-DETECT] Detected ResNet18 architecture: num_classes={num_classes}, dropout={'yes' if has_dropout else 'no'}")
+        return "resnet18", config
+    
+    # === ConvNet (Scratch) Detection ===
+    # ConvNet has keys like "backbone.0.conv.0.weight", "head.2.weight"
+    elif any("backbone" in k for k in keys):
+        # Infer channels from the output channels of each ConvBlock's first conv
+        # Pattern: backbone.{block_idx}.conv.0.weight -> shape [out_ch, in_ch, 3, 3]
+        channels = []
+        block_idx = 0
+        while f"backbone.{block_idx}.conv.0.weight" in state_dict:
+            weight = state_dict[f"backbone.{block_idx}.conv.0.weight"]
+            channels.append(weight.shape[0])  # out_channels
+            block_idx += 1
+        
+        if not channels:
+            raise ValueError("ConvNet detected but could not find backbone conv weights")
+        
+        # Get num_classes from head's final linear layer
+        # head structure: AdaptiveAvgPool2d, Flatten, Linear
+        # So head.2.weight is the Linear layer
+        if "head.2.weight" in state_dict:
+            num_classes = state_dict["head.2.weight"].shape[0]
+        else:
+            raise ValueError("ConvNet detected but could not find head.2.weight")
+        
+        # Detect if BatchNorm is used by checking for bn layers
+        # Pattern: backbone.{block_idx}.conv.1.weight for BatchNorm (if present)
+        # Conv->BN->ReLU->Conv->BN->ReLU means index 1 would be BN
+        has_batchnorm = f"backbone.0.conv.1.weight" in state_dict and \
+                        state_dict["backbone.0.conv.1.weight"].dim() == 1  # BN weight is 1D
+        
+        # Detect dropout by checking for Dropout2d layers (though they don't have weights)
+        # We can't reliably detect dropout rate, so we'll use a default
+        
+        config = {
+            "arch": "scratch",
+            "num_classes": num_classes,
+            "channels": channels,
+            "regularisation": "batchnorm" if has_batchnorm else "none",
+            "dropout": 0.0,  # Can't infer, but doesn't affect eval (disabled in eval mode)
+        }
+        print(f"[AUTO-DETECT] Detected ConvNet architecture: channels={channels}, num_classes={num_classes}, batchnorm={has_batchnorm}")
+        return "scratch", config
+    
+    else:
+        # Unknown architecture
+        sample_keys = keys[:10] if len(keys) > 10 else keys
+        raise ValueError(
+            f"Could not auto-detect model architecture from state_dict.\n"
+            f"Sample keys: {sample_keys}\n"
+            f"Please provide a --config file that matches the training configuration."
+        )
+
+    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    train_val_idx, test_idx = next(sss1.split(idx, y))
+    y_train_val = y[train_val_idx]
+
+    sss2 = StratifiedShuffleSplit(
+        n_splits=1,
+        test_size=val_size / (1.0 - test_size),
+        random_state=seed,
+    )
+    train_idx, val_idx = next(sss2.split(train_val_idx, y_train_val))
+
+    return train_val_idx[train_idx], train_val_idx[val_idx], test_idx
+
+
+def get_model_num_classes(model: torch.nn.Module) -> int:
+    """
+    Extract the number of output classes from a model.
+    Supports ResNet18Classifier and SmallCNN (ConvNet).
+    """
+    # Case 1: ResNet18Classifier (wrapper)
+    if hasattr(model, "model") and hasattr(model.model, "fc"):
+        # Check if fc is Sequential (with dropout) or Linear
+        if isinstance(model.model.fc, torch.nn.Sequential):
+            for layer in model.model.fc:
+                if isinstance(layer, torch.nn.Linear):
+                    return layer.out_features
+        elif isinstance(model.model.fc, torch.nn.Linear):
+            return model.model.fc.out_features
+
+    # Case 2: SmallCNN (ConvNet)
+    if hasattr(model, "head"):
+        # head is usually Sequential(Pool, Flatten, Linear)
+        for layer in model.head:
+            if isinstance(layer, torch.nn.Linear):
+                return layer.out_features
+
+    # Case 3: Generic fallback - check last module
+    try:
+        last_module = list(model.modules())[-1]
+        if isinstance(last_module, torch.nn.Linear):
+            return last_module.out_features
+    except Exception:
+        pass
+
+    return 0
 
 
 def load_dataset_robust(dataset_name: str):
@@ -184,12 +397,15 @@ class HFDataset(Dataset):
         - Handles different possible image and label key formats (e.g., "image" or "img" for images, "label" or "labels" for labels).
         - Extracts label_names from dataset features if available, which is useful for generating human-readable reports and confusion matrices.
     """
-    def __init__(self, hf_split: Any, transform: Callable) -> None:
+    def __init__(self, hf_split: Any, transform: Callable, label_names: List[str] = None) -> None:
         self.hf_split = hf_split
         self.transform = transform
         
         # Robust label name extraction with multiple fallback strategies
-        self.label_names = self._extract_label_names(hf_split)
+        if label_names is not None:
+            self.label_names = label_names
+        else:
+            self.label_names = self._extract_label_names(hf_split)
         
     def _extract_label_names(self, hf_split):
         """Extract label names using multiple strategies with graceful fallbacks"""
@@ -315,101 +531,173 @@ class HFDataset(Dataset):
         
         return x, int(y)
 
-def load_model(model_path: str, config_path: str = "configs/train.yaml") -> torch.nn.Module:
-    """Load trained model with configuration"""
-    # Validate paths exist
+def load_model(model_path: str, config_path: Optional[str] = None) -> torch.nn.Module:
+    """
+    Load trained model with 3-step architecture detection fallback.
+    
+    Architecture detection priority:
+    1. Checkpoint metadata (if saved by newer train.py with 'model_config' key)
+    2. Auto-inference from state_dict weight shapes and key patterns
+    3. Config file fallback (uses --config or default configs/train.yaml)
+    
+    This allows evaluation to work without requiring the original config file,
+    making the script truly architecture-agnostic.
+    """
+    # Validate model path exists
     if not os.path.exists(model_path):
         raise FileNotFoundError(
             f"Model checkpoint not found: {model_path}\n"
             f"Make sure you've trained a model first, or download one from ClearML."
         )
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(
-            f"Config file not found: {config_path}\n"
-            f"Available configs: configs/train.yaml, configs/train_quick_test.yaml"
-        )
     
-    print(f"[DEBUG] Loading config from {config_path}")
-    with open(config_path, "r") as f:
-        cfg_dict = yaml.safe_load(f)
-    
-    # Get number of classes from config (much faster than iterating dataset)
-    num_classes = cfg_dict["model"].get("num_classes")
-    
-    if num_classes is None:
-        # Fallback: Load dataset to determine number of classes
-        print(f"[DEBUG] num_classes not in config, loading dataset: {cfg_dict['data']['dataset_name']}")
-        ds = load_dataset_robust(cfg_dict["data"]["dataset_name"])
-        split_name = "train" if "train" in ds else list(ds.keys())[0]  # type: ignore[union-attr]
-        full = ds[split_name]
-        
-        # Try to get num_classes from dataset features first (fast)
-        label_feature = full.features.get("label") or full.features.get("labels")
-        if label_feature and hasattr(label_feature, "num_classes"):
-            num_classes = label_feature.num_classes
-            print(f"[DEBUG] Got {num_classes} classes from dataset features")
-        else:
-            # Last resort: sample a subset to estimate class count
-            print("[DEBUG] Sampling dataset to count classes...")
-            unique_labels = set()
-            for i, item in enumerate(full):
-                if i >= 1000:  # Sample first 1000 items
-                    break
-                for key in ["label", "labels", "class", "category", "target"]:
-                    if key in item:
-                        try:
-                            unique_labels.add(int(item[key]))
-                            break
-                        except (ValueError, TypeError):
-                            continue
-            num_classes = len(unique_labels)
-            print(f"[DEBUG] Estimated {num_classes} classes from sampling")
-    else:
-        print(f"[DEBUG] Using num_classes={num_classes} from config")
-    
-    # Build model - detect build_model signature to handle different versions
-    import inspect
-    print(f"[DEBUG] Building model with config: {cfg_dict['model']}")
-    model_cfg = cfg_dict["model"]
-    
-    build_model_params = inspect.signature(build_model).parameters
-    
-    if "regularisation" in build_model_params:
-        # New signature: build_model(num_classes, channels, regularisation, dropout)
-        if "regularisation" in model_cfg:
-            regularisation = model_cfg["regularisation"]
-        elif model_cfg.get("use_batchnorm", False):
-            regularisation = "batchnorm"
-        else:
-            regularisation = "none"
-        
-        model = build_model(
-            num_classes=num_classes,
-            channels=model_cfg["channels"],
-            regularisation=regularisation,
-            dropout=model_cfg.get("dropout", 0.0),
-        )
-    elif "use_batchnorm" in build_model_params:
-        # Old signature: build_model(num_classes, channels, use_batchnorm, dropout)
-        if "regularisation" in model_cfg:
-            use_batchnorm = model_cfg["regularisation"] == "batchnorm"
-        else:
-            use_batchnorm = model_cfg.get("use_batchnorm", False)
-        
-        model = build_model(
-            num_classes=num_classes,
-            channels=model_cfg["channels"],
-            use_batchnorm=use_batchnorm,
-            dropout=model_cfg.get("dropout", 0.0),
-        )
-    else:
-        raise ValueError(f"Unknown build_model signature: {list(build_model_params.keys())}")
-    
-    # Load weights
+    # Load checkpoint first to check for embedded metadata
     print(f"[DEBUG] Loading checkpoint from {model_path}")
     checkpoint = torch.load(model_path, map_location="cpu")
     print(f"[DEBUG] Checkpoint keys: {list(checkpoint.keys())}")
     
+    model_cfg = None
+    arch = None
+    num_classes = None
+    config_source = None
+    
+    # === Step 1: Try to get config from checkpoint metadata ===
+    if "model_config" in checkpoint:
+        print("[STEP 1] Using model configuration embedded in checkpoint")
+        model_cfg = checkpoint["model_config"]
+        arch = model_cfg.get("arch", "scratch")
+        num_classes = model_cfg.get("num_classes")
+        config_source = "checkpoint"
+    
+    # === Step 2: Try to infer architecture from state_dict ===
+    if model_cfg is None and "model_state" in checkpoint:
+        print("[STEP 2] Auto-detecting architecture from model weights...")
+        try:
+            arch, model_cfg = infer_architecture_from_state_dict(checkpoint["model_state"])
+            num_classes = model_cfg.get("num_classes")
+            config_source = "auto-detected"
+        except ValueError as e:
+            print(f"[STEP 2] Auto-detection failed: {e}")
+    
+    # === Step 3: Fall back to config file ===
+    if model_cfg is None:
+        if config_path is None:
+            config_path = "configs/train.yaml"
+        
+        print(f"[STEP 3] Falling back to config file: {config_path}")
+        
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(
+                f"Config file not found: {config_path}\n"
+                f"Could not auto-detect architecture from checkpoint.\n"
+                f"Please provide a --config file that matches the training configuration.\n"
+                f"Available configs: configs/train.yaml, configs/train_quick_test.yaml"
+            )
+        
+        with open(config_path, "r") as f:
+            cfg_dict = yaml.safe_load(f)
+        
+        model_cfg = cfg_dict["model"]
+        arch = model_cfg.get("arch", "scratch")
+        num_classes = model_cfg.get("num_classes")
+        config_source = f"config file ({config_path})"
+        
+        # If num_classes not in config, try to get from dataset
+        if num_classes is None:
+            print(f"[DEBUG] num_classes not in config, loading dataset: {cfg_dict['data']['dataset_name']}")
+            ds = load_dataset_robust(cfg_dict["data"]["dataset_name"])
+            split_name = "train" if "train" in ds else list(ds.keys())[0]  # type: ignore[union-attr]
+            full = ds[split_name]
+            
+            # Try to get num_classes from dataset features first (fast)
+            label_feature = full.features.get("label") or full.features.get("labels")
+            if label_feature and hasattr(label_feature, "num_classes"):
+                num_classes = label_feature.num_classes
+                print(f"[DEBUG] Got {num_classes} classes from dataset features")
+            else:
+                # Last resort: sample a subset to estimate class count
+                print("[DEBUG] Sampling dataset to count classes...")
+                unique_labels = set()
+                for i, item in enumerate(full):
+                    if i >= 1000:  # Sample first 1000 items
+                        break
+                    for key in ["label", "labels", "class", "category", "target"]:
+                        if key in item:
+                            try:
+                                unique_labels.add(int(item[key]))
+                                break
+                            except (ValueError, TypeError):
+                                continue
+                num_classes = len(unique_labels)
+                print(f"[DEBUG] Estimated {num_classes} classes from sampling")
+    
+    print(f"[DEBUG] Architecture: {arch} (source: {config_source})")
+    print(f"[DEBUG] Model config: {model_cfg}")
+    
+    # === Build model using detected/configured architecture ===
+    def build_scratch_model_wrapper(model_cfg, num_classes):
+        """Build ConvNet from scratch"""
+        import inspect
+        build_model_params = inspect.signature(build_model).parameters
+        
+        if "regularisation" in build_model_params:
+            # New signature: build_model(num_classes, channels, regularisation, dropout)
+            if "regularisation" in model_cfg:
+                regularisation = model_cfg["regularisation"]
+            elif model_cfg.get("use_batchnorm", False):
+                regularisation = "batchnorm"
+            else:
+                regularisation = "none"
+            
+            return build_model(
+                num_classes=num_classes,
+                channels=model_cfg.get("channels", [32, 64, 128]),
+                regularisation=regularisation,
+                dropout=model_cfg.get("dropout", 0.0),
+            )
+        elif "use_batchnorm" in build_model_params:
+            # Old signature: build_model(num_classes, channels, use_batchnorm, dropout)
+            if "regularisation" in model_cfg:
+                use_batchnorm = model_cfg["regularisation"] == "batchnorm"
+            else:
+                use_batchnorm = model_cfg.get("use_batchnorm", False)
+            
+            return build_model(
+                num_classes=num_classes,
+                channels=model_cfg.get("channels", [32, 64, 128]),
+                use_batchnorm=use_batchnorm,
+                dropout=model_cfg.get("dropout", 0.0),
+            )
+        else:
+            raise ValueError(f"Unknown build_model signature: {list(build_model_params.keys())}")
+    
+    def build_resnet18_wrapper(model_cfg, num_classes):
+        """Build ResNet18 classifier"""
+        return ResNet18Classifier(
+            num_classes=num_classes,
+            pretrained=model_cfg.get("pretrained", True),
+            dropout=model_cfg.get("dropout", 0.0),
+            train_backbone=model_cfg.get("train_backbone", True),
+        )
+    
+    # Architecture registry - extend this dict to add new models
+    MODEL_BUILDERS = {
+        "scratch": build_scratch_model_wrapper,
+        "convnet": build_scratch_model_wrapper,  # Alias for backward compatibility
+        "resnet18": build_resnet18_wrapper,
+    }
+    
+    if arch not in MODEL_BUILDERS:
+        available_archs = ", ".join(MODEL_BUILDERS.keys())
+        raise ValueError(
+            f"Unknown model architecture: '{arch}'\n"
+            f"Available architectures: {available_archs}\n"
+            f"To add a new architecture, extend the MODEL_BUILDERS dict in evaluate.py"
+        )
+    
+    model = MODEL_BUILDERS[arch](model_cfg, num_classes)
+    print(f"[DEBUG] Built {arch} model with num_classes={num_classes}")
+    
+    # Load weights
     try:
         model.load_state_dict(checkpoint["model_state"])
     except RuntimeError as e:
@@ -421,9 +709,10 @@ def load_model(model_path: str, config_path: str = "configs/train.yaml") -> torc
             
             raise RuntimeError(
                 f"Model weight mismatch!\n\n"
-                f"This usually means the --config doesn't match the config used during training.\n"
-                f"Current config: {config_path}\n"
-                f"Model channels: {model_cfg.get('channels')}\n\n"
+                f"Architecture detected: {arch} (source: {config_source})\n"
+                f"Model config: {model_cfg}\n\n"
+                f"This usually means the auto-detection failed or the config doesn't match.\n"
+                f"Try specifying a --config that matches the training configuration.\n\n"
                 f"Available configs:\n  {configs_list}\n\n"
                 f"Example:\n"
                 f"  python src/evaluate.py --model {model_path} --config configs/train_quick_test.yaml --split val\n\n"
@@ -588,9 +877,21 @@ def plot_confusion_matrix(cm: np.ndarray, class_names: Optional[List[str]] = Non
     annot_size = 10 if n_display <= 15 else (8 if n_display <= 25 else 6)
     annot = n_display <= 30  # Disable annotations for very large matrices
     
-    sns.heatmap(plot_cm, annot=annot, fmt="d", cmap="Blues", 
+    # Create a mask for the diagonal to improve color contrast for errors
+    # We want the heatmap color scale to be driven by the errors (off-diagonal),
+    # not the correct predictions (diagonal) which are usually much larger.
+    # However, we still want to see the numbers on the diagonal if annot=True.
+    
+    # Create a copy for plotting the heatmap colors
+    heatmap_data = plot_cm.copy()
+    np.fill_diagonal(heatmap_data, 0)
+    
+    # Plot heatmap using the zeroed-diagonal data for color mapping
+    # But use the original data for annotations
+    sns.heatmap(heatmap_data, annot=plot_cm if annot else None, fmt="d", cmap="Blues", 
                 xticklabels=plot_names, yticklabels=plot_names,
                 annot_kws={"size": annot_size})
+                
     plt.xlabel("Predicted")
     plt.ylabel("True")
     plt.title(title)
@@ -914,14 +1215,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic evaluation (uses default config)
+  # Basic evaluation (auto-detects architecture from checkpoint)
   python src/evaluate.py --model outputs/best.pt --split val
 
-  # Evaluation with specific config (MUST match training config!)
-  python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml
+  # Works with any architecture (ConvNet, ResNet18, etc.)
+  python src/evaluate.py --model outputs/resnet18_best.pt --split val
 
   # Quick validation without full evaluation
   python src/evaluate.py --model outputs/best.pt --dry-run
+
+  # Override config if needed (optional for most checkpoints)
+  python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml
 
   # List available configs and models
   python src/evaluate.py --list-configs
@@ -929,7 +1233,7 @@ Examples:
         """
     )
     parser.add_argument("--model", help="Path to model checkpoint (contains model_state)")
-    parser.add_argument("--config", default="configs/train.yaml", help="Path to train config yaml (MUST match training!)")
+    parser.add_argument("--config", default="configs/train.yaml", help="Path to config yaml (optional - architecture auto-detected from checkpoint)")
     parser.add_argument("--split", default="val", help="Dataset split to evaluate: val, test, or train (default: val)")
     parser.add_argument("--output", default="outputs/eval_results.json", help="Path to save evaluation results")
     parser.add_argument("--no-error-gallery", dest="error_gallery", action="store_false", help="Disable error gallery generation")
@@ -942,6 +1246,7 @@ Examples:
     parser.add_argument("--cm-classes", type=int, default=15, metavar="N",
                         help="Number of classes to show in confusion matrix (default: 15). "
                              "Shows the N most confused classes. Use 0 for full matrix.")
+    parser.add_argument("--exclude-classes", nargs="+", help="List of class names to exclude from evaluation (e.g. 'Background_without_leaves')")
     parser.add_argument("--list-configs", action="store_true", help="List available config files and exit")
     parser.add_argument("--list-models", action="store_true", help="List available model checkpoints and exit")
     args = parser.parse_args()
@@ -1002,6 +1307,11 @@ Examples:
     with open(args.config, "r") as f:
         cfg_dict = yaml.safe_load(f)
     
+    # Set seed for reproducibility (same as training)
+    seed = cfg_dict.get("seed", 42)
+    set_seed(seed)
+    print(f"[Evaluation] Using seed: {seed}")
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[Evaluation] Using device: {device}")
     if device.type == "cuda":
@@ -1032,33 +1342,147 @@ Examples:
     
     ds = load_dataset_robust(cfg_dict["data"]["dataset_name"])
     
-    # Get evaluation split
+    # Get full dataset and recreate exact splits used during training
     print(f"[DEBUG] Available dataset splits: {list(ds.keys())}")
-    if args.split in ds:
-        eval_split = ds[args.split]
-        eval_split_name = args.split
-        print(f"[DEBUG] Using split '{eval_split_name}' with {len(eval_split)} samples")
-    else:
-        # Use train split if specified split doesn't exist
-        if "train" in ds:
-            eval_split = ds["train"]
-            eval_split_name = "train"
-        else:
-            first_key = list(ds.keys())[0]
-            eval_split = ds[first_key]
-            eval_split_name = first_key
-        print(f"[Evaluation] Split '{args.split}' not found, using '{eval_split_name}' with {len(eval_split)} samples")
+    split_name = "train" if "train" in ds else list(ds.keys())[0]
+    full = ds[split_name]
     
-    # Apply transforms
-    _, eval_tf = get_transforms(
-        img_size=cfg_dict["data"]["image_size"],
-        normalize=cfg_dict["data"]["normalize"],
-        augment=False  # No augmentation for evaluation
+    # Smart Auto-Fix: Check for class count mismatch
+    model_num_classes = get_model_num_classes(model)
+    if model_num_classes > 0:
+        # Get dataset classes
+        temp_ds = HFDataset(full, transform=None)
+        dataset_labels = temp_ds.label_names
+        dataset_num_classes = len(dataset_labels) if dataset_labels else 0
+        
+        if dataset_num_classes > 0 and model_num_classes != dataset_num_classes:
+            print(f"\n[WARNING] Class count mismatch detected!")
+            print(f"  Model expects: {model_num_classes} classes")
+            print(f"  Dataset has:   {dataset_num_classes} classes")
+            
+            # Heuristic: If diff is 1 and 'Background_without_leaves' exists, it's the likely culprit
+            if (dataset_num_classes - model_num_classes == 1) and \
+               ("Background_without_leaves" in dataset_labels) and \
+               (not args.exclude_classes):
+                
+                print("[AUTO-FIX] 'Background_without_leaves' found in dataset but likely missing from model.")
+                print("           Automatically excluding it to match model dimensions.")
+                print("           (Use --exclude-classes to override this behavior)")
+                args.exclude_classes = ["Background_without_leaves"]
+            else:
+                print("[WARNING] Could not automatically resolve mismatch. Evaluation may fail or have low accuracy.")
+                print(f"Dataset classes: {dataset_labels}")
+
+    # Handle class exclusion if requested
+    label_names_override = None
+    if args.exclude_classes:
+        print(f"[Data] Excluding classes: {args.exclude_classes}")
+        # We need label names to map names to indices
+        temp_ds = HFDataset(full, transform=None)
+        all_labels = temp_ds.label_names
+        
+        exclude_indices = []
+        for cls in args.exclude_classes:
+            if cls in all_labels:
+                exclude_indices.append(all_labels.index(cls))
+            else:
+                print(f"[WARNING] Class '{cls}' not found in dataset")
+        
+        if exclude_indices:
+            # Create mapping from old_idx -> new_idx
+            old_to_new = {}
+            new_idx = 0
+            keep_indices = sorted(list(set(range(len(all_labels))) - set(exclude_indices)))
+            for old_idx in keep_indices:
+                old_to_new[old_idx] = new_idx
+                new_idx += 1
+            
+            def filter_exclude(example):
+                label = example["label"] if "label" in example else example["labels"]
+                return label not in exclude_indices
+
+            def map_labels(example):
+                label_key = "label" if "label" in example else "labels"
+                old_label = example[label_key]
+                example[label_key] = old_to_new[old_label]
+                return example
+
+            print(f"[Data] Filtering {len(exclude_indices)} classes...")
+            full = full.filter(filter_exclude)
+            print(f"[Data] Remapping labels...")
+            full = full.map(map_labels)
+            
+            label_names_override = [all_labels[i] for i in keep_indices]
+
+    # Handle subset_fraction like training does
+    subset_fraction = cfg_dict["data"].get("subset_fraction", 1.0)
+    if subset_fraction < 1.0:
+        n = int(len(full) * subset_fraction)
+        full = full.shuffle(seed=seed).select(range(n))
+        print(f"[Data] Using subset: {n} samples (fraction={subset_fraction})")
+    
+    # Build labels list for stratified splitting
+    labels = []
+    for item in full:
+        if "label" in item:
+            labels.append(int(item["label"]))
+        elif "labels" in item:
+            labels.append(int(item["labels"]))
+        else:
+            raise KeyError("Sample missing 'label'/'labels' key")
+    
+    # Recreate exact splits used during training
+    train_idx, val_idx, test_idx = stratified_split(
+        labels,
+        val_size=cfg_dict["data"].get("val_size", 0.15),
+        test_size=cfg_dict["data"].get("test_size", 0.15),
+        seed=seed,
     )
     
-    eval_ds = HFDataset(eval_split, transform=eval_tf)
+    # Select the requested split
+    if args.split == "train":
+        eval_split = full.select(train_idx.tolist())
+        eval_split_name = "train"
+    elif args.split == "val":
+        eval_split = full.select(val_idx.tolist())
+        eval_split_name = "val"
+    elif args.split == "test":
+        eval_split = full.select(test_idx.tolist())
+        eval_split_name = "test"
+    else:
+        # Fallback for unknown split names: default to val
+        print(f"[WARNING] Unknown split '{args.split}', using 'val' split")
+        eval_split = full.select(val_idx.tolist())
+        eval_split_name = "val"
+    
+    print(f"[Evaluation] Using '{eval_split_name}' split with {len(eval_split)} samples")
+    
+    # Apply transforms (using same format as train.py - dict with 'color' key)
+    # For evaluation: train=False, augment=False (wrapper handles this)
+    eval_transforms = get_transforms(
+        image_size=cfg_dict["data"]["image_size"],
+        normalize=cfg_dict["data"]["normalize"],
+        augment=False,  # No augmentation for evaluation
+    )
+    
+    # Use 'color' modality like training does
+    eval_tf = eval_transforms["color"]
+    
+    eval_ds = HFDataset(eval_split, transform=eval_tf, label_names=label_names_override)
+    
+    # Handle num_workers - Windows has issues with multiprocessing in DataLoader
+    num_workers = cfg_dict["data"]["num_workers"]
+    if sys.platform == "win32" and num_workers > 0:
+        # Windows uses 'spawn' for multiprocessing which can be slower and error-prone
+        # with certain configurations (pickling issues).
+        # Setting num_workers=0 runs data loading in the main process.
+        # This is safer but might be slightly slower as data loading won't happen in parallel.
+        num_workers = 0
+        if not args.quiet:
+            print("[INFO] Windows detected: Setting num_workers=0 for stability (single-process data loading).")
+    
     eval_loader = DataLoader(eval_ds, batch_size=cfg_dict["train"]["batch_size"], 
-                             shuffle=False, num_workers=cfg_dict["data"]["num_workers"], pin_memory=torch.cuda.is_available())
+                             shuffle=False, num_workers=num_workers, pin_memory=torch.cuda.is_available())
     
     # Dry-run mode: validate setup and exit
     if args.dry_run:

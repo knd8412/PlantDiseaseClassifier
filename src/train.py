@@ -226,7 +226,17 @@ def main():
             for item in full
         ]
         num_classes = len(set(labels))
+        
+        # Try to extract class names
+        class_names = None
+        if "labels" in full.features and hasattr(full.features["labels"], "names"):
+            class_names = full.features["labels"].names
+        elif "label" in full.features and hasattr(full.features["label"], "names"):
+            class_names = full.features["label"].names
+            
         print(f"[Data] Classes: {num_classes}, Samples: {len(full)}")
+        if class_names:
+            print(f"[Data] Class names found: {len(class_names)}")
 
         # Stratified split
         train_idx, val_idx, test_idx = stratified_split(
@@ -391,6 +401,25 @@ def main():
     else:
         raise ValueError(f"Unknown model arch: {arch}")
 
+    # Build model_config for checkpoint (enables architecture-agnostic evaluation)
+    model_config = {
+        "arch": arch,
+        "num_classes": num_classes,
+        "label_names": class_names if 'class_names' in locals() else None,
+    }
+    if arch == "scratch":
+        model_config.update({
+            "channels": cfg.model["channels"],
+            "regularisation": cfg.model["regularisation"],
+            "dropout": cfg.model["dropout"],
+        })
+    elif arch == "resnet18":
+        model_config.update({
+            "pretrained": cfg.model.get("pretrained", True),
+            "dropout": cfg.model.get("dropout", 0.0),
+            "train_backbone": cfg.model.get("train_backbone", True),
+        })
+
     # Loss & Optimizer
     criterion = nn.CrossEntropyLoss()
     if cfg.train["optimizer"].lower() == "adamw":
@@ -480,7 +509,11 @@ def main():
             best_val_acc = va_acc
             best_epoch = epoch
             torch.save(
-                {"model_state": model.state_dict(), "val_acc": best_val_acc},
+                {
+                    "model_state": model.state_dict(),
+                    "val_acc": best_val_acc,
+                    "model_config": model_config,  # Enables architecture-agnostic evaluation
+                },
                 best_path,
             )
             upload_model(task, best_path, name="best.pt")
