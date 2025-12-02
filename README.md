@@ -78,17 +78,51 @@ If you are in an offline environment, pre-download the dataset or cache it local
 
 The project includes a comprehensive evaluation script that provides detailed metrics and error analysis for trained models.
 
-### Basic Evaluation
+**Dataset:** The PlantVillage dataset downloads automatically on first run and is cached locally (~/.cache/huggingface/datasets/). Subsequent runs use the cached version.
+
+### ⚠️ IMPORTANT: Config Must Match Training!
+
+The most common error when running evaluation is a **model weight mismatch** caused by using the wrong config file. The `--config` flag **must** point to the same config used during training.
+
 ```bash
-python src/evaluate.py --model outputs/best.pt --split val
+# ✅ CORRECT: Use the same config as training
+python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
+
+# ❌ WRONG: Using default config when model was trained with different config
+python src/evaluate.py --model outputs/best.pt --split val  # Uses configs/train.yaml by default!
 ```
 
-> **Important:** The `--config` must match the architecture used to train the model. If you trained with `configs/train_quick_test.yaml`, use that same config for evaluation:
+**Tip:** Use `--dry-run` to validate your setup before running full evaluation:
+```bash
+python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --dry-run
+```
+
+### Usage
+
+```bash
+# Evaluate a model (uses configs/train.yaml by default)
+python src/evaluate.py --model outputs/best.pt --split val
+
+# Evaluate on test set
+python src/evaluate.py --model outputs/best.pt --split test
+
+# Skip error gallery for faster evaluation
+python src/evaluate.py --model outputs/best.pt --split val --no-error-gallery
+```
+
+> ⚠️ **Config must match model architecture!**  
+> The `--config` flag must point to the same config used during training.  
+> Using the wrong config will cause a model weight mismatch error.
+>
 > ```bash
+> # If trained with train_quick_test.yaml:
 > python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
+>
+> # If trained with train.yaml (default):
+> python src/evaluate.py --model outputs/best.pt --config configs/train.yaml --split val
 > ```
 
-This command generates:
+### What it generates
 - **Overall accuracy** and **top-5 accuracy** metrics
 - **Per-class precision, recall, and F1 scores**
 - **Confusion matrix** visualization (`confusion_matrix.png`)
@@ -116,6 +150,21 @@ For detailed documentation on the error gallery functionality, see [`ERROR_GALLE
 - `--output`: Custom path for results JSON file
 - `--gallery-top-pairs`: Number of worst confusion pairs to analyze
 - `--gallery-samples-per-pair`: Number of misclassified samples per confusion pair
+- `--dry-run`: Validate setup (model, config, dataset) without running full evaluation
+- `--cm-classes N`: Number of classes to show in confusion matrix (default: 15, use 0 for all)
+- `--quiet` / `-q`: Reduce output verbosity
+
+### Confusion Matrix Readability
+
+The confusion matrix defaults to showing the 15 most confused classes for readability. Adjust with `--cm-classes`:
+
+```bash
+# Show top 10 most confused classes (more focused)
+python src/evaluate.py --model outputs/best.pt --split val --cm-classes 10
+
+# Show all 38 classes (full matrix)
+python src/evaluate.py --model outputs/best.pt --split val --cm-classes 0
+```
 
 ### Output Interpretation
 Evaluation results include:
