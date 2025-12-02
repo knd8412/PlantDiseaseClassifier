@@ -44,6 +44,9 @@ Options:
     --dry-run                    Validate setup without running full evaluation
     --cm-classes N               Number of classes to show in confusion matrix (default: 15)
                                  Shows the N most confused classes; use 0 or 'all' for full matrix
+    --exclude-classes LIST       List of class names to exclude (e.g. 'Background_without_leaves')
+    --list-configs               List available config files and exit
+    --list-models                List available model checkpoints and exit
 
 Outputs:
     - outputs/eval_results.json     Detailed metrics in JSON format
