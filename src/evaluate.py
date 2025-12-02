@@ -191,39 +191,59 @@ def load_model(model_path: str, config_path: str = "configs/train.yaml") -> torc
     with open(config_path, "r") as f:
         cfg_dict = yaml.safe_load(f)
     
-    # Load dataset to get number of classes
-    print(f"[DEBUG] Loading dataset: {cfg_dict['data']['dataset_name']}")
-    ds = load_dataset(cfg_dict["data"]["dataset_name"])
-    split_name = "train" if "train" in ds else list(ds.keys())[0]
-    full = ds[split_name]
-    labels = []
-    for i, item in enumerate(full):
-        label_value = None
-        label_keys_to_check = ["label", "labels", "class", "category", "target"]
+    # Get number of classes from config (much faster than iterating dataset)
+    num_classes = cfg_dict["model"].get("num_classes")
+    
+    if num_classes is None:
+        # Fallback: Load dataset to determine number of classes
+        print(f"[DEBUG] num_classes not in config, loading dataset: {cfg_dict['data']['dataset_name']}")
+        ds = load_dataset(cfg_dict["data"]["dataset_name"])
+        split_name = "train" if "train" in ds else list(ds.keys())[0]  # type: ignore[union-attr]
+        full = ds[split_name]
         
-        for key in label_keys_to_check:
-            if key in item:
-                try:
-                    label_value = int(item[key])
+        # Try to get num_classes from dataset features first (fast)
+        label_feature = full.features.get("label") or full.features.get("labels")
+        if label_feature and hasattr(label_feature, "num_classes"):
+            num_classes = label_feature.num_classes
+            print(f"[DEBUG] Got {num_classes} classes from dataset features")
+        else:
+            # Last resort: sample a subset to estimate class count
+            print("[DEBUG] Sampling dataset to count classes...")
+            unique_labels = set()
+            for i, item in enumerate(full):
+                if i >= 1000:  # Sample first 1000 items
                     break
-                except (ValueError, TypeError):
-                    continue
-        
-        if label_value is None:
-            available_keys = list(item.keys())
-            raise KeyError(f"Item {i} does not contain valid label key. Available keys: {available_keys}")
-        
-        labels.append(label_value)
-    num_classes = len(set(labels))
-    print(f"[DEBUG] Detected {num_classes} classes from dataset")
+                for key in ["label", "labels", "class", "category", "target"]:
+                    if key in item:
+                        try:
+                            unique_labels.add(int(item[key]))
+                            break
+                        except (ValueError, TypeError):
+                            continue
+            num_classes = len(unique_labels)
+            print(f"[DEBUG] Estimated {num_classes} classes from sampling")
+    else:
+        print(f"[DEBUG] Using num_classes={num_classes} from config")
     
     # Build model
     print(f"[DEBUG] Building model with config: {cfg_dict['model']}")
+    model_cfg = cfg_dict["model"]
+    
+    # Handle different config formats for batchnorm
+    # Some configs use 'regularisation: batchnorm|none', others use 'use_batchnorm: true'
+    if "regularisation" in model_cfg:
+        reg_value = model_cfg["regularisation"]
+        if reg_value not in ("batchnorm", "none"):
+            print(f"[WARNING] Unrecognized regularisation value '{reg_value}', treating as 'none'")
+        use_batchnorm = reg_value == "batchnorm"
+    else:
+        use_batchnorm = model_cfg.get("use_batchnorm", False)
+    
     model = build_model(
         num_classes=num_classes,
-        channels=cfg_dict["model"]["channels"],
-        use_batchnorm=cfg_dict["model"]["use_batchnorm"],
-        dropout=cfg_dict["model"]["dropout"],
+        channels=model_cfg["channels"],
+        use_batchnorm=use_batchnorm,
+        dropout=model_cfg.get("dropout", 0.0),
     )
     
     # Load weights
