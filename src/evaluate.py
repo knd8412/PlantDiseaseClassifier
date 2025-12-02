@@ -5,30 +5,120 @@ Calculates overall accuracy, top-five accuracy, per-class precision and recall,
 generates a confusion matrix visualization, and creates an error gallery with
 misclassified samples for analysis.
 
+Dataset:
+    The PlantVillage dataset downloads automatically on first run and is cached at:
+        ~/.cache/huggingface/datasets/
+    Subsequent runs use the cache. If you're offline, it will use the cached version.
+
 Usage:
-    python evaluate.py --model outputs/best.pt --split val
-    
-Error Gallery Options:
-    --error-gallery              Generate error gallery (default: True)
+    # Basic evaluation
+    python src/evaluate.py --model outputs/best.pt --split val
+
+    # IMPORTANT: --config must match the config used during training!
+    # Wrong config = model weight mismatch error
+    python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
+
+    # Evaluate on test set
+    python src/evaluate.py --model outputs/best.pt --split test
+
+    # Skip error gallery for faster evaluation
+    python src/evaluate.py --model outputs/best.pt --split val --no-error-gallery
+
+Options:
+    --model PATH                 Path to model checkpoint (required)
+    --config PATH                Config file matching training config (default: configs/train.yaml)
+    --split NAME                 Dataset split to evaluate: val, test, or train (default: val)
+    --output PATH                Path for results JSON (default: outputs/eval_results.json)
+    --no-error-gallery           Disable error gallery generation
     --gallery-top-pairs N        Number of worst confusion pairs to analyze (default: 5)
-    --gallery-samples-per-pair N Number of misclassified samples per pair (default: 10)
+    --gallery-samples-per-pair N Samples per confusion pair (default: 10)
+    --error-gallery-dir DIR      Directory for error gallery output (default: errors)
+    --quiet, -q                  Reduce output verbosity
+    --dry-run                    Validate setup without running full evaluation
+    --cm-classes N               Number of classes to show in confusion matrix (default: 15)
+                                 Shows the N most confused classes; use 0 or 'all' for full matrix
+
+Outputs:
+    - outputs/eval_results.json     Detailed metrics in JSON format
+    - outputs/confusion_matrix.png  Confusion matrix heatmap
+    - errors/                       Error gallery with misclassified samples (if enabled)
 """
 
 import argparse
 import json
 import os
+import sys
+from datetime import datetime
 from typing import List, Dict, Tuple, Optional, Callable, Any
-import numpy as np
-import torch
-from torch.utils.data import DataLoader, Dataset
-from sklearn.metrics import confusion_matrix, classification_report, precision_recall_fscore_support
-import matplotlib.pyplot as plt
-import seaborn as sns
-from datasets import load_dataset
-from PIL import Image
-import yaml
-import shutil
 from pathlib import Path
+
+# Check critical dependencies early with helpful error messages
+_MISSING_DEPS = []
+
+try:
+    import numpy as np
+except ImportError:
+    _MISSING_DEPS.append("numpy")
+
+try:
+    import torch
+    from torch.utils.data import DataLoader, Dataset
+except ImportError:
+    _MISSING_DEPS.append("torch")
+
+try:
+    from sklearn.metrics import confusion_matrix, classification_report, precision_recall_fscore_support
+except ImportError:
+    _MISSING_DEPS.append("scikit-learn")
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    _MISSING_DEPS.append("matplotlib")
+
+try:
+    import seaborn as sns
+except ImportError:
+    _MISSING_DEPS.append("seaborn")
+
+try:
+    from datasets import load_dataset
+except ImportError:
+    _MISSING_DEPS.append("datasets")
+
+try:
+    from PIL import Image
+except ImportError:
+    _MISSING_DEPS.append("Pillow")
+
+try:
+    import yaml
+except ImportError:
+    _MISSING_DEPS.append("pyyaml")
+
+if _MISSING_DEPS:
+    print("=" * 60)
+    print("ERROR: Missing required dependencies!")
+    print("=" * 60)
+    print(f"\nMissing packages: {', '.join(_MISSING_DEPS)}")
+    print("\nTo install all requirements, run:")
+    print("  pip install -r requirements.txt")
+    print("\nOr install missing packages individually:")
+    print(f"  pip install {' '.join(_MISSING_DEPS)}")
+    print("=" * 60)
+    sys.exit(1)
+
+import shutil
+
+# Optional tqdm for progress bars (graceful fallback if not installed)
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    def tqdm(iterable, **kwargs):
+        """Fallback tqdm that just returns the iterable"""
+        return iterable
 
 # Import from relative modules when running as script
 try:
@@ -40,6 +130,46 @@ except ImportError:
     from data.transforms import get_transforms
     from models.convnet_scratch import build_model
     from clearml_utils import init_task, log_scalar, log_image
+
+
+def load_dataset_robust(dataset_name: str):
+    """
+    Load dataset with automatic fallback to offline/cached mode.
+    
+    Tries online first, falls back to cached version if network fails.
+    The dataset is cached locally after first download (~/.cache/huggingface/datasets/).
+    """
+    import os
+    try:
+        # Try normal loading (uses cache if available, checks for updates online)
+        return load_dataset(dataset_name)
+    except Exception as e:
+        # Network error - try offline mode with cached data
+        error_msg = str(e).lower()
+        if "connection" in error_msg or "timeout" in error_msg or "offline" in error_msg or "resolve" in error_msg:
+            print(f"[WARNING] Network unavailable, attempting to use cached dataset...")
+            old_offline = os.environ.get("HF_DATASETS_OFFLINE")
+            try:
+                os.environ["HF_DATASETS_OFFLINE"] = "1"
+                ds = load_dataset(dataset_name)
+                print("[INFO] Using cached dataset (offline mode)")
+                return ds
+            except Exception as cache_err:
+                raise RuntimeError(
+                    f"Failed to load dataset '{dataset_name}'.\n"
+                    f"Network error: {e}\n"
+                    f"Cache error: {cache_err}\n\n"
+                    f"To fix: Run once with internet to download the dataset, or ask a teammate to share their cache folder:\n"
+                    f"  ~/.cache/huggingface/datasets/"
+                ) from cache_err
+            finally:
+                if old_offline is None:
+                    os.environ.pop("HF_DATASETS_OFFLINE", None)
+                else:
+                    os.environ["HF_DATASETS_OFFLINE"] = old_offline
+        else:
+            raise
+
 
 class HFDataset(Dataset):
     """
@@ -187,6 +317,18 @@ class HFDataset(Dataset):
 
 def load_model(model_path: str, config_path: str = "configs/train.yaml") -> torch.nn.Module:
     """Load trained model with configuration"""
+    # Validate paths exist
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Model checkpoint not found: {model_path}\n"
+            f"Make sure you've trained a model first, or download one from ClearML."
+        )
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"Config file not found: {config_path}\n"
+            f"Available configs: configs/train.yaml, configs/train_quick_test.yaml"
+        )
+    
     print(f"[DEBUG] Loading config from {config_path}")
     with open(config_path, "r") as f:
         cfg_dict = yaml.safe_load(f)
@@ -197,7 +339,7 @@ def load_model(model_path: str, config_path: str = "configs/train.yaml") -> torc
     if num_classes is None:
         # Fallback: Load dataset to determine number of classes
         print(f"[DEBUG] num_classes not in config, loading dataset: {cfg_dict['data']['dataset_name']}")
-        ds = load_dataset(cfg_dict["data"]["dataset_name"])
+        ds = load_dataset_robust(cfg_dict["data"]["dataset_name"])
         split_name = "train" if "train" in ds else list(ds.keys())[0]  # type: ignore[union-attr]
         full = ds[split_name]
         
@@ -225,32 +367,70 @@ def load_model(model_path: str, config_path: str = "configs/train.yaml") -> torc
     else:
         print(f"[DEBUG] Using num_classes={num_classes} from config")
     
-    # Build model
+    # Build model - detect build_model signature to handle different versions
+    import inspect
     print(f"[DEBUG] Building model with config: {cfg_dict['model']}")
     model_cfg = cfg_dict["model"]
     
-    # Handle different config formats for batchnorm
-    # Some configs use 'regularisation: batchnorm|none', others use 'use_batchnorm: true'
-    if "regularisation" in model_cfg:
-        reg_value = model_cfg["regularisation"]
-        if reg_value not in ("batchnorm", "none"):
-            print(f"[WARNING] Unrecognized regularisation value '{reg_value}', treating as 'none'")
-        use_batchnorm = reg_value == "batchnorm"
-    else:
-        use_batchnorm = model_cfg.get("use_batchnorm", False)
+    build_model_params = inspect.signature(build_model).parameters
     
-    model = build_model(
-        num_classes=num_classes,
-        channels=model_cfg["channels"],
-        use_batchnorm=use_batchnorm,
-        dropout=model_cfg.get("dropout", 0.0),
-    )
+    if "regularisation" in build_model_params:
+        # New signature: build_model(num_classes, channels, regularisation, dropout)
+        if "regularisation" in model_cfg:
+            regularisation = model_cfg["regularisation"]
+        elif model_cfg.get("use_batchnorm", False):
+            regularisation = "batchnorm"
+        else:
+            regularisation = "none"
+        
+        model = build_model(
+            num_classes=num_classes,
+            channels=model_cfg["channels"],
+            regularisation=regularisation,
+            dropout=model_cfg.get("dropout", 0.0),
+        )
+    elif "use_batchnorm" in build_model_params:
+        # Old signature: build_model(num_classes, channels, use_batchnorm, dropout)
+        if "regularisation" in model_cfg:
+            use_batchnorm = model_cfg["regularisation"] == "batchnorm"
+        else:
+            use_batchnorm = model_cfg.get("use_batchnorm", False)
+        
+        model = build_model(
+            num_classes=num_classes,
+            channels=model_cfg["channels"],
+            use_batchnorm=use_batchnorm,
+            dropout=model_cfg.get("dropout", 0.0),
+        )
+    else:
+        raise ValueError(f"Unknown build_model signature: {list(build_model_params.keys())}")
     
     # Load weights
     print(f"[DEBUG] Loading checkpoint from {model_path}")
     checkpoint = torch.load(model_path, map_location="cpu")
     print(f"[DEBUG] Checkpoint keys: {list(checkpoint.keys())}")
-    model.load_state_dict(checkpoint["model_state"])
+    
+    try:
+        model.load_state_dict(checkpoint["model_state"])
+    except RuntimeError as e:
+        if "size mismatch" in str(e) or "Missing key" in str(e) or "Unexpected key" in str(e):
+            # List available configs to help user
+            configs_dir = Path("configs")
+            available_configs = list(configs_dir.glob("*.yaml")) if configs_dir.exists() else []
+            configs_list = "\n  ".join([str(c) for c in available_configs[:10]]) or "No configs found in configs/"
+            
+            raise RuntimeError(
+                f"Model weight mismatch!\n\n"
+                f"This usually means the --config doesn't match the config used during training.\n"
+                f"Current config: {config_path}\n"
+                f"Model channels: {model_cfg.get('channels')}\n\n"
+                f"Available configs:\n  {configs_list}\n\n"
+                f"Example:\n"
+                f"  python src/evaluate.py --model {model_path} --config configs/train_quick_test.yaml --split val\n\n"
+                f"Original error: {e}"
+            ) from e
+        raise
+    
     print("[DEBUG] Model loaded successfully")
     return model
 
@@ -262,44 +442,79 @@ def top_5_accuracy(logits: torch.Tensor, targets: torch.Tensor) -> float:
     correct = (top5 == targets).any(dim=1).float()
     return correct.mean().item()
 
-def evaluate_model(model: torch.nn.Module, loader: DataLoader, device: torch.device, label_names=None) -> Dict:
-    """Run model on loader and compute metrics"""
-    print(f"[DEBUG] Starting evaluation on device: {device}")
+def evaluate_model(model: torch.nn.Module, loader: DataLoader, device: torch.device, label_names=None, verbose: bool = True) -> Dict:
+    """Run model on loader and compute metrics
+    
+    Args:
+        model: PyTorch model to evaluate
+        loader: DataLoader with evaluation data
+        device: Device to run inference on
+        label_names: Optional list of class names
+        verbose: Whether to print debug info (default True)
+    
+    Returns:
+        Dictionary with evaluation metrics, predictions, and confusion matrix
+    """
+    print(f"[Evaluation] Running on device: {device}")
+    if not HAS_TQDM:
+        print("[TIP] Install tqdm for progress bars: pip install tqdm")
+    
     model.eval()
     logits_list = []
     preds_list = []
     targets_list = []
     
-    batch_count = 0
+    total_batches = len(loader)
+    total_samples = len(loader.dataset) if hasattr(loader, 'dataset') else "unknown"
+    print(f"[Evaluation] Processing {total_samples} samples in {total_batches} batches...")
+    
+    # Memory-efficient evaluation with periodic progress updates
+    last_progress_pct = 0
     with torch.no_grad():
-        for x, y in loader:
-            batch_count += 1
-            print(f"[DEBUG] Processing batch {batch_count}, shape: {x.shape}")
+        for batch_idx, (x, y) in enumerate(tqdm(loader, desc="Evaluating", disable=not HAS_TQDM)):
+            # Progress update for non-tqdm users
+            if not HAS_TQDM and verbose:
+                progress_pct = int((batch_idx + 1) / total_batches * 100)
+                # Update every 10%
+                if progress_pct >= last_progress_pct + 10:
+                    last_progress_pct = progress_pct
+                    print(f"[Evaluation] Progress: {progress_pct}% ({batch_idx + 1}/{total_batches} batches)")
+            
             x = x.to(device)
             y = y.to(device)
             out = model(x)
-            print(f"[DEBUG] Model output type: {type(out)}, shape: {getattr(out, 'shape', 'No shape')}")
             if isinstance(out, tuple) or isinstance(out, list):
                 out = out[0]
-                print(f"[DEBUG] Extracted first element, shape: {out.shape}")
             logits_cpu = out.detach().cpu()
             preds_cpu = logits_cpu.argmax(dim=1).numpy()
             logits_list.append(logits_cpu)
             preds_list.append(preds_cpu)
             targets_list.append(y.detach().cpu().numpy())
+            
+            # Periodic memory cleanup for very large datasets
+            if batch_idx > 0 and batch_idx % 100 == 0:
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
     
-    print(f"[DEBUG] Concatenating results from {batch_count} batches")
     logits = torch.cat(logits_list, dim=0)
     preds = np.concatenate(preds_list, axis=0)
     targets = np.concatenate(targets_list, axis=0)
     
-    print(f"[DEBUG] Final shapes - logits: {logits.shape}, preds: {preds.shape}, targets: {targets.shape}")
+    print(f"[Evaluation] Evaluated {len(preds)} samples")
     
     overall_accuracy = float((preds == targets).mean())
     top5_accuracy_val = top_5_accuracy(logits, torch.from_numpy(targets))
     
     num_classes = logits.shape[1]
-    print(f"[DEBUG] Calculating metrics for {num_classes} classes")
+    
+    # Validate label_names matches num_classes
+    if label_names is not None and len(label_names) != num_classes:
+        print(f"[WARNING] Label names count ({len(label_names)}) doesn't match model output classes ({num_classes})")
+        print(f"[WARNING] Generating generic class names instead")
+        label_names = [f"Class_{i}" for i in range(num_classes)]
+    elif label_names is None:
+        label_names = [f"Class_{i}" for i in range(num_classes)]
+    
     precision, recall, fscore, support = precision_recall_fscore_support(targets, preds, labels=list(range(num_classes)), zero_division=0)
     cm = confusion_matrix(targets, preds, labels=list(range(num_classes)))
     
@@ -317,19 +532,82 @@ def evaluate_model(model: torch.nn.Module, loader: DataLoader, device: torch.dev
         "logits": logits
     }
 
-def plot_confusion_matrix(cm: np.ndarray, class_names: Optional[List[str]] = None, save_path: str = "confusion_matrix.png"):
-    """Save a confusion matrix heatmap"""
-    plt.figure(figsize=(10, 8))
+def plot_confusion_matrix(cm: np.ndarray, class_names: Optional[List[str]] = None, 
+                          save_path: str = "confusion_matrix.png", top_n: Optional[int] = None) -> List[int]:
+    """
+    Plot a confusion matrix heatmap, optionally showing only the most confused classes.
+    
+    Args:
+        cm: Full confusion matrix (num_classes x num_classes)
+        class_names: List of class names (uses indices if None)
+        save_path: Path to save the confusion matrix image
+        top_n: If specified, show only top N most confused classes.
+               If None or >= num_classes, shows full matrix.
+               
+    Returns:
+        List of class indices included in the matrix
+    """
+    num_classes = cm.shape[0]
+    
     if class_names is None:
-        labels = [str(i) for i in range(cm.shape[0])]  # Convert to strings for seaborn
+        class_names = [str(i) for i in range(num_classes)]
+    
+    # Determine if we should show focused or full matrix
+    show_all = top_n is None or top_n <= 0 or top_n >= num_classes
+    
+    if show_all:
+        # Full confusion matrix
+        plot_cm = cm
+        plot_names = class_names
+        class_indices = list(range(num_classes))
+        title = "Confusion Matrix"
     else:
-        labels = class_names
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels)
+        # Focused matrix: select top_n most confused classes
+        confusion_scores = []
+        for i in range(num_classes):
+            # Sum of misclassifications: row (false negatives) + column (false positives)
+            row_sum = cm[i, :].sum() - cm[i, i]
+            col_sum = cm[:, i].sum() - cm[i, i]
+            confusion_scores.append((i, row_sum + col_sum))
+        
+        # Sort by confusion score and take top N
+        confusion_scores.sort(key=lambda x: x[1], reverse=True)
+        class_indices = sorted([idx for idx, score in confusion_scores[:top_n]])
+        
+        # Extract submatrix
+        plot_cm = cm[np.ix_(class_indices, class_indices)]
+        plot_names = [class_names[i] for i in class_indices]
+        title = f"Confusion Matrix (Top {top_n} Most Confused Classes)"
+    
+    # Determine figure size based on number of classes
+    n_display = len(plot_names)
+    fig_size = max(8, n_display * 0.5)
+    plt.figure(figsize=(fig_size, fig_size))
+    
+    # Adjust annotation size based on matrix size
+    annot_size = 10 if n_display <= 15 else (8 if n_display <= 25 else 6)
+    annot = n_display <= 30  # Disable annotations for very large matrices
+    
+    sns.heatmap(plot_cm, annot=annot, fmt="d", cmap="Blues", 
+                xticklabels=plot_names, yticklabels=plot_names,
+                annot_kws={"size": annot_size})
     plt.xlabel("Predicted")
     plt.ylabel("True")
+    plt.title(title)
+    
+    # Rotate labels for readability if many classes
+    if n_display > 10:
+        plt.xticks(rotation=45, ha='right')
+        plt.yticks(rotation=0)
+    
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
+    
+    if not show_all:
+        print(f"[Evaluation] Confusion matrix shows {top_n} most confused classes")
+    
+    return class_indices
 
 def identify_worst_confusion_pairs(cm: np.ndarray, top_pairs: int = 5) -> List[Tuple[int, int, int]]:
     """Identify the worst confusion pairs from confusion matrix"""
@@ -365,18 +643,23 @@ def collect_misclassified_samples(predictions: np.ndarray, targets: np.ndarray,
 def plot_confusion_grid(hf_split: Any, misclassified_indices: List[int],
                        true_class: int, predicted_class: int,
                        label_names: List[str], save_path: str,
-                       grid_size: Optional[Tuple[int, int]] = None) -> None:
-    """Generate image grid for misclassified samples"""
+                       grid_size: Optional[Tuple[int, int]] = None) -> bool:
+    """Generate image grid for misclassified samples
+    
+    Returns:
+        True if grid was generated successfully, False otherwise
+    """
     num_samples = len(misclassified_indices)
     if num_samples == 0:
-        print(f"[WARNING] No misclassified samples found for true_class={true_class}, predicted_class={predicted_class}")
-        return
+        print(f"[WARNING] No misclassified samples found for {label_names[true_class]} -> {label_names[predicted_class]}")
+        return False
     
     # Compute grid size dynamically based on number of samples
     if grid_size is None:
-        cols = 2
-        rows = (num_samples + cols - 1) // cols  # Ceiling division
+        cols = min(2, num_samples)  # Don't have more columns than samples
+        rows = (num_samples + cols - 1) // cols if cols > 0 else 1  # Ceiling division
         rows = max(1, rows)  # At least 1 row
+        cols = max(1, cols)  # At least 1 column
         grid_size = (rows, cols)
     
     fig, axes = plt.subplots(grid_size[0], grid_size[1], figsize=(12, 3 * grid_size[0]))
@@ -425,16 +708,34 @@ def plot_confusion_grid(hf_split: Any, misclassified_indices: List[int],
     plt.tight_layout()
     plt.savefig(save_path)
     plt.close()
+    return True
 
 def generate_error_gallery(results: Dict, hf_split, label_names: List[str],
                          output_dir: str = "errors", top_pairs: int = 5,
-                         samples_per_pair: int = 10):
-    """Generate error gallery with misclassified samples"""
+                         samples_per_pair: int = 10) -> Dict[str, Any]:
+    """Generate error gallery with misclassified samples
+    
+    Returns:
+        Dictionary with gallery generation statistics and any errors encountered
+    """
     print("[Error Gallery] Generating error gallery...")
+    
+    stats = {
+        "pairs_processed": 0,
+        "pairs_successful": 0,
+        "pairs_failed": 0,
+        "errors": []
+    }
     
     # Create output directory
     output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    try:
+        output_path.mkdir(parents=True, exist_ok=True)
+    except PermissionError as e:
+        error_msg = f"Cannot create error gallery directory: {e}"
+        print(f"[ERROR] {error_msg}")
+        stats["errors"].append(error_msg)
+        return stats
     
     # Get confusion matrix and predictions
     cm = results["confusion_matrix"]
@@ -446,7 +747,7 @@ def generate_error_gallery(results: Dict, hf_split, label_names: List[str],
     
     if not confusion_pairs:
         print("[Error Gallery] No confusion pairs found")
-        return
+        return stats
     
     # Generate gallery for each confusion pair
     gallery_config = {
@@ -456,53 +757,75 @@ def generate_error_gallery(results: Dict, hf_split, label_names: List[str],
     }
     
     for pair_idx, (true_class, predicted_class, count) in enumerate(confusion_pairs):
-        print(f"[Error Gallery] Processing confusion pair {pair_idx}: {label_names[true_class]} -> {label_names[predicted_class]} (count: {count})")
+        stats["pairs_processed"] += 1
+        print(f"[Error Gallery] Processing confusion pair {pair_idx + 1}/{len(confusion_pairs)}: {label_names[true_class]} -> {label_names[predicted_class]} (count: {count})")
         
-        # Create subdirectory for this confusion pair
-        pair_dir = output_path / f"confusion_pair_{true_class}_{predicted_class}"
-        pair_dir.mkdir(exist_ok=True)
-        
-        # Collect misclassified samples
-        misclassified_indices = collect_misclassified_samples(
-            predictions, targets, true_class, predicted_class, samples_per_pair
-        )
-        
-        if misclassified_indices:
-            # Generate image grid
-            grid_path = pair_dir / "grid.png"
-            plot_confusion_grid(hf_split, misclassified_indices, true_class, predicted_class,
-                              label_names, str(grid_path))
+        try:
+            # Create subdirectory for this confusion pair
+            pair_dir = output_path / f"confusion_pair_{true_class}_{predicted_class}"
+            pair_dir.mkdir(exist_ok=True)
             
-            # Save sample metadata
-            samples_metadata = {
-                "true_class": true_class,
-                "predicted_class": predicted_class,
-                "true_class_name": label_names[true_class],
-                "predicted_class_name": label_names[predicted_class],
-                "confusion_count": count,
-                "misclassified_indices": misclassified_indices
-            }
+            # Collect misclassified samples
+            misclassified_indices = collect_misclassified_samples(
+                predictions, targets, true_class, predicted_class, samples_per_pair
+            )
             
-            with open(pair_dir / "samples.json", "w") as f:
-                json.dump(samples_metadata, f, indent=2)
-            
-            # Add to gallery config
-            gallery_config["confusion_pairs"].append({
-                "true_class": true_class,
-                "predicted_class": predicted_class,
-                "true_class_name": label_names[true_class],
-                "predicted_class_name": label_names[predicted_class],
-                "confusion_count": count,
-                "num_samples_collected": len(misclassified_indices)
-            })
-        else:
-            print(f"[WARNING] No misclassified samples found for {label_names[true_class]} → {label_names[predicted_class]}")
+            if misclassified_indices:
+                # Generate image grid
+                grid_path = pair_dir / "grid.png"
+                grid_success = plot_confusion_grid(hf_split, misclassified_indices, true_class, predicted_class,
+                                  label_names, str(grid_path))
+                
+                if not grid_success:
+                    stats["pairs_failed"] += 1
+                    stats["errors"].append(f"Failed to generate grid for {label_names[true_class]} -> {label_names[predicted_class]}")
+                    continue
+                
+                # Save sample metadata
+                samples_metadata = {
+                    "true_class": true_class,
+                    "predicted_class": predicted_class,
+                    "true_class_name": label_names[true_class],
+                    "predicted_class_name": label_names[predicted_class],
+                    "confusion_count": count,
+                    "misclassified_indices": misclassified_indices
+                }
+                
+                with open(pair_dir / "samples.json", "w") as f:
+                    json.dump(samples_metadata, f, indent=2)
+                
+                # Add to gallery config
+                gallery_config["confusion_pairs"].append({
+                    "true_class": true_class,
+                    "predicted_class": predicted_class,
+                    "true_class_name": label_names[true_class],
+                    "predicted_class_name": label_names[predicted_class],
+                    "confusion_count": count,
+                    "num_samples_collected": len(misclassified_indices)
+                })
+                
+                stats["pairs_successful"] += 1
+            else:
+                print(f"[WARNING] No misclassified samples found for {label_names[true_class]} → {label_names[predicted_class]}")
+                stats["pairs_failed"] += 1
+                
+        except Exception as e:
+            error_msg = f"Error processing pair {label_names[true_class]} -> {label_names[predicted_class]}: {e}"
+            print(f"[ERROR] {error_msg}")
+            stats["errors"].append(error_msg)
+            stats["pairs_failed"] += 1
+            continue
     
     # Save gallery configuration
     with open(output_path / "gallery_config.json", "w") as f:
         json.dump(gallery_config, f, indent=2)
     
-    print(f"[Error Gallery] Error gallery generated in {output_dir}")
+    print(f"[Error Gallery] Complete: {stats['pairs_successful']}/{stats['pairs_processed']} pairs successful")
+    if stats["errors"]:
+        print(f"[Error Gallery] {len(stats['errors'])} errors encountered (see gallery_config.json)")
+    print(f"[Error Gallery] Output directory: {output_dir}")
+    
+    return stats
 
 def save_error_analysis(results: Dict, output_dir: str = "errors"):
     """Generate markdown analysis of error patterns"""
@@ -545,32 +868,169 @@ def save_error_analysis(results: Dict, output_dir: str = "errors"):
     
     print(f"[Error Analysis] Analysis saved to {analysis_path}")
 
+def list_available_configs(configs_dir: str = "configs") -> List[str]:
+    """List all available config files in the configs directory"""
+    configs_path = Path(configs_dir)
+    if not configs_path.exists():
+        return []
+    return sorted([str(p) for p in configs_path.glob("*.yaml")])
+
+
+def list_available_models(outputs_dir: str = "outputs") -> List[str]:
+    """List all available model checkpoints"""
+    outputs_path = Path(outputs_dir)
+    if not outputs_path.exists():
+        return []
+    return sorted([str(p) for p in outputs_path.glob("*.pt")])
+
+
+def validate_paths(model_path: str, config_path: str) -> Tuple[bool, List[str]]:
+    """
+    Validate that model and config paths exist.
+    Returns (is_valid, list_of_error_messages)
+    """
+    errors = []
+    
+    if not os.path.exists(model_path):
+        errors.append(f"Model checkpoint not found: {model_path}")
+        available_models = list_available_models()
+        if available_models:
+            errors.append(f"Available models: {', '.join(available_models)}")
+        else:
+            errors.append("No .pt files found in outputs/. Train a model first with: python src/train.py")
+    
+    if not os.path.exists(config_path):
+        errors.append(f"Config file not found: {config_path}")
+        available_configs = list_available_configs()
+        if available_configs:
+            errors.append(f"Available configs: {', '.join(available_configs)}")
+    
+    return len(errors) == 0, errors
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate PlantDiseaseClassifier model")
-    parser.add_argument("--model", required=True, help="Path to model checkpoint (contains model_state)")
-    parser.add_argument("--config", default="configs/train.yaml", help="Path to train config yaml")
-    parser.add_argument("--split", default="val", help="Dataset split to evaluate (e.g., val, test)")
+    parser = argparse.ArgumentParser(
+        description="Evaluate PlantDiseaseClassifier model",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic evaluation (uses default config)
+  python src/evaluate.py --model outputs/best.pt --split val
+
+  # Evaluation with specific config (MUST match training config!)
+  python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml
+
+  # Quick validation without full evaluation
+  python src/evaluate.py --model outputs/best.pt --dry-run
+
+  # List available configs and models
+  python src/evaluate.py --list-configs
+  python src/evaluate.py --list-models
+        """
+    )
+    parser.add_argument("--model", help="Path to model checkpoint (contains model_state)")
+    parser.add_argument("--config", default="configs/train.yaml", help="Path to train config yaml (MUST match training!)")
+    parser.add_argument("--split", default="val", help="Dataset split to evaluate: val, test, or train (default: val)")
     parser.add_argument("--output", default="outputs/eval_results.json", help="Path to save evaluation results")
     parser.add_argument("--no-error-gallery", dest="error_gallery", action="store_false", help="Disable error gallery generation")
     parser.set_defaults(error_gallery=True)
     parser.add_argument("--gallery-top-pairs", type=int, default=5, help="Number of worst confusion pairs to analyze")
     parser.add_argument("--gallery-samples-per-pair", type=int, default=10, help="Number of misclassified samples per confusion pair")
+    parser.add_argument("--error-gallery-dir", default="errors", help="Directory for error gallery output (default: errors)")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Reduce output verbosity")
+    parser.add_argument("--dry-run", action="store_true", help="Validate setup (model, config, dataset) without running full evaluation")
+    parser.add_argument("--cm-classes", type=int, default=15, metavar="N",
+                        help="Number of classes to show in confusion matrix (default: 15). "
+                             "Shows the N most confused classes. Use 0 for full matrix.")
+    parser.add_argument("--list-configs", action="store_true", help="List available config files and exit")
+    parser.add_argument("--list-models", action="store_true", help="List available model checkpoints and exit")
     args = parser.parse_args()
+
+    # Handle --list-configs
+    if args.list_configs:
+        configs = list_available_configs()
+        if configs:
+            print("Available config files:")
+            for cfg in configs:
+                print(f"  {cfg}")
+        else:
+            print("No config files found in configs/")
+        return
+
+    # Handle --list-models
+    if args.list_models:
+        models = list_available_models()
+        if models:
+            print("Available model checkpoints:")
+            for model in models:
+                print(f"  {model}")
+        else:
+            print("No model checkpoints found in outputs/")
+            print("Train a model first with: python src/train.py")
+        return
+
+    # Require --model for actual evaluation
+    if not args.model:
+        parser.error("--model is required (or use --list-configs/--list-models)")
+
+    # Check if running from correct directory
+    expected_markers = ["configs", "src", "outputs"]
+    missing_markers = [m for m in expected_markers if not os.path.exists(m)]
+    if missing_markers:
+        print("\n" + "=" * 60)
+        print("WARNING: You may be running from the wrong directory!")
+        print("=" * 60)
+        print(f"Current directory: {os.getcwd()}")
+        print(f"Missing expected folders: {missing_markers}")
+        print("\nMake sure to run from the project root directory:")
+        print("  cd PlantDiseaseClassifier")
+        print("  python src/evaluate.py --model outputs/best.pt")
+        print("=" * 60 + "\n")
+
+    # Validate paths early with helpful suggestions
+    is_valid, errors = validate_paths(args.model, args.config)
+    if not is_valid:
+        print("\n" + "=" * 60)
+        print("ERROR: Invalid paths!")
+        print("=" * 60)
+        for err in errors:
+            print(f"  {err}")
+        print("=" * 60)
+        sys.exit(1)
 
     # Load config
     with open(args.config, "r") as f:
         cfg_dict = yaml.safe_load(f)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[Evaluation] Using device: {device}")
+    if device.type == "cuda":
+        print(f"[Evaluation] GPU: {torch.cuda.get_device_name(0)}")
     
     # Load model
     print(f"[Evaluation] Loading model from {args.model}")
     model = load_model(args.model, args.config)
     model.to(device)
     
-    # Load dataset
-    print(f"[Evaluation] Loading dataset: {cfg_dict['data']['dataset_name']}")
-    ds = load_dataset(cfg_dict["data"]["dataset_name"])
+    # Load dataset with user-friendly first-run warning
+    dataset_name = cfg_dict["data"]["dataset_name"]
+    print(f"[Evaluation] Loading dataset: {dataset_name}")
+    
+    # Check if this might be a first-time download
+    cache_dir = Path.home() / ".cache" / "huggingface" / "datasets"
+    dataset_cache_exists = cache_dir.exists() and any(cache_dir.iterdir()) if cache_dir.exists() else False
+    
+    if not dataset_cache_exists:
+        print("\n" + "=" * 60)
+        print("NOTE: First-time dataset download")
+        print("=" * 60)
+        print(f"The {dataset_name} dataset will be downloaded and cached.")
+        print("This may take several minutes depending on your connection.")
+        print(f"Cache location: {cache_dir}")
+        print("Subsequent runs will use the cached version.")
+        print("=" * 60 + "\n")
+    
+    ds = load_dataset_robust(cfg_dict["data"]["dataset_name"])
     
     # Get evaluation split
     print(f"[DEBUG] Available dataset splits: {list(ds.keys())}")
@@ -600,9 +1060,38 @@ def main():
     eval_loader = DataLoader(eval_ds, batch_size=cfg_dict["train"]["batch_size"], 
                              shuffle=False, num_workers=cfg_dict["data"]["num_workers"], pin_memory=torch.cuda.is_available())
     
+    # Dry-run mode: validate setup and exit
+    if args.dry_run:
+        print("\n" + "="*60)
+        print("[Dry Run] Setup validation successful!")
+        print("="*60)
+        print(f"  Model:        {args.model}")
+        print(f"  Config:       {args.config}")
+        print(f"  Dataset:      {cfg_dict['data']['dataset_name']}")
+        print(f"  Split:        {eval_split_name}")
+        print(f"  Samples:      {len(eval_ds)}")
+        print(f"  Num classes:  {len(eval_ds.label_names) if eval_ds.label_names else 'Unknown'}")
+        print(f"  Batch size:   {cfg_dict['train']['batch_size']}")
+        print(f"  Device:       {device}")
+        print(f"  Output:       {args.output}")
+        print(f"  Error gallery: {'enabled -> ' + args.error_gallery_dir if args.error_gallery else 'disabled'}")
+        print(f"  CM classes:   {args.cm_classes if args.cm_classes > 0 else 'all'}")
+        print("="*60)
+        
+        # Estimate evaluation time
+        samples_per_sec_estimate = 100 if device.type == "cuda" else 20
+        est_time_sec = len(eval_ds) / samples_per_sec_estimate
+        if est_time_sec > 60:
+            est_time_str = f"~{est_time_sec/60:.1f} minutes"
+        else:
+            est_time_str = f"~{est_time_sec:.0f} seconds"
+        print(f"\nEstimated evaluation time: {est_time_str}")
+        print("\nTo run full evaluation, remove --dry-run flag.")
+        return
+    
     # Run evaluation
     print("[Evaluation] Running evaluation...")
-    results = evaluate_model(model, eval_loader, device, label_names=eval_ds.label_names)
+    results = evaluate_model(model, eval_loader, device, label_names=eval_ds.label_names, verbose=not args.quiet)
     
     # Print results
     print(f"\n=== Evaluation Results ===")
@@ -629,9 +1118,17 @@ def main():
     # Generate confusion matrix
     print("[Evaluation] Generating confusion matrix...")
     cm_save_path = os.path.join(os.path.dirname(args.output) or "outputs", "confusion_matrix.png")
-    plot_confusion_matrix(results['confusion_matrix'],
-                         class_names=results['label_names'],
-                         save_path=cm_save_path)
+    cm_classes_shown = plot_confusion_matrix(
+        results['confusion_matrix'],
+        class_names=results['label_names'],
+        save_path=cm_save_path,
+        top_n=args.cm_classes
+    )
+    
+    # Show which classes are in the matrix if focused
+    if args.cm_classes > 0 and args.cm_classes < len(results['label_names']):
+        top_confused = [results['label_names'][i] for i in cm_classes_shown[:5]]
+        print(f"[Evaluation] Most confused classes: {top_confused}...")
     
     # Save results
     print(f"[Evaluation] Saving results to {args.output}")
@@ -639,6 +1136,17 @@ def main():
     with open(args.output, "w") as f:
         # Convert numpy arrays to lists for JSON serialization
         json_results = {
+            # Metadata for reproducibility
+            "metadata": {
+                "model_path": os.path.abspath(args.model),
+                "config_path": os.path.abspath(args.config),
+                "split": args.split,
+                "dataset_name": cfg_dict["data"]["dataset_name"],
+                "num_samples": len(eval_ds),
+                "device": str(device),
+                "timestamp": datetime.now().isoformat(),
+            },
+            # Metrics
             "overall_accuracy": float(results["overall_accuracy"]),
             "top5_accuracy": float(results["top5_accuracy"]),
             "per_class_precision": results["per_class_precision"].tolist(),
@@ -657,13 +1165,13 @@ def main():
             results=results,
             hf_split=eval_split,
             label_names=results["label_names"],
-            output_dir="errors",
+            output_dir=args.error_gallery_dir,
             top_pairs=args.gallery_top_pairs,
             samples_per_pair=args.gallery_samples_per_pair
         )
         
         # Generate error analysis markdown
-        save_error_analysis(results, output_dir="errors")
+        save_error_analysis(results, output_dir=args.error_gallery_dir)
     
     # ClearML integration
     task = init_task(
@@ -681,7 +1189,7 @@ def main():
         
         # Log error gallery images to ClearML
         if args.error_gallery:
-            errors_dir = Path("errors")
+            errors_dir = Path(args.error_gallery_dir)
             if errors_dir.exists():
                 for pair_dir in errors_dir.iterdir():
                     if pair_dir.is_dir() and pair_dir.name.startswith("confusion_pair_"):
