@@ -7,7 +7,7 @@ outputs/
 *.pyo
 .env
 clearml.conf
-errors/
+/errors/
 .gradio/
 */flagged/
 flagged/

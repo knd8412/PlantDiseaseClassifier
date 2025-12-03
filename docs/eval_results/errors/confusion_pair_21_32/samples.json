@@ -1,0 +1,6 @@
+{
+  "true_class": 21,
+  "predicted_class": 32,
+  "true_class_name": "Potato___Late_blight",
+  "predicted_class_name": "Tomato___Septoria_leaf_spot",
+  "confusion_count": 
