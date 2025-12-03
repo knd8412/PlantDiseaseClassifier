@@ -1,0 +1,5 @@
+{
+  "top_pairs": 5,
+  "samples_per_pair": 10,
+  "confusion_pairs": []
+}
