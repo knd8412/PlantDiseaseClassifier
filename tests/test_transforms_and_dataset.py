@@ -1,20 +1,27 @@
 import os
 from pathlib import Path
+
 import torch
 from PIL import Image
 
-from data.transforms import get_transforms
 from data.dataset import MultiModalityDataset
+from data.transforms import get_transforms
 
-def make_dummy_jpg(path, size=(32,32)):
-    path.parent.mkdir(parents=True,exist_ok=True)
-    img = Image.new("RGB",size,color=(123,222,112))
-    img.save(path,format="JPEG")
+
+def make_dummy_jpg(path, size=(32, 32)):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img = Image.new("RGB", size, color=(123, 222, 112))
+    img.save(path, format="JPEG")
+
 
 def test_get_transforms_shapes():
     img_size = 224
-    t_train = get_transforms(image_size=img_size, train=True, normalize=True, augment=True)
-    t_eval = get_transforms(image_size=img_size, train=False, normalize=True, augment=False)
+    t_train = get_transforms(
+        image_size=img_size, train=True, normalize=True, augment=True
+    )
+    t_eval = get_transforms(
+        image_size=img_size, train=False, normalize=True, augment=False
+    )
 
     assert "color" in t_train and "color" in t_eval
 
@@ -42,13 +49,14 @@ def test_multimodality_dataset_item(tmp_path):
         (str(seg_path), 0, "segmented"),
     ]
 
-    transforms = get_transforms(image_size=128, train=True, normalize=True, augment=False)
+    transforms = get_transforms(
+        image_size=128, train=True, normalize=True, augment=False
+    )
     dataset = MultiModalityDataset(samples, transforms)
 
     assert len(dataset) == 3
-    item = dataset[0]
-    assert set(item.keys()) == {"image", "label", "modality"}
-    assert isinstance(item["image"], torch.Tensor)
-    assert item["image"].shape[0] == 3  # 3 channels
-    assert item["label"].item() == 0
-    assert item["modality"] in {"color", "grayscale", "segmented"}
+
+    img, label = dataset[0]
+    assert isinstance(img, torch.Tensor)
+    assert img.shape[0] == 3  # 3 channels
+    assert label.item() == 0
