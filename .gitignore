@@ -4,6 +4,14 @@ __pycache__/
 outputs/
 *.pt
 *.pyc
+*.pyo
 .env
 clearml.conf
 
+.gradio/
+*/flagged/
+flagged/
+.mcp-debug*
+.vscode/
+.pytest_cache/
+!src/models/checkpoints/*.pt

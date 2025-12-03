@@ -19,7 +19,7 @@ img_transform = get_transforms(
     image_size=224, train=False, normalize=True, augment=False
 )["color"]
 resnet_checkpoint = "src/models/checkpoints/resnet18_best.pt"
-cnn_checkpoint = "src/models/checkpoints/cnn_scratch_best.pt"
+cnn_checkpoint = "src/models/checkpoints/best_scratch_cnn.pt"
 models = {}
 
 ImageNet_mean = [0.485, 0.456, 0.406]
