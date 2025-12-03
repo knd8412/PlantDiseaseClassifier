@@ -8,7 +8,9 @@ pyyaml>=6.0
 matplotlib>=3.8
 seaborn>=0.13
 tqdm>=4.66
-gradio
+Pillow>=10.0
+gradio==5.49.1
+huggingface_hub<0.24.0
 black
 isort
 pre-commit
