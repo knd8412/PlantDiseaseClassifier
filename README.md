@@ -53,7 +53,7 @@ The workflow covers the entire machine learning lifecycle:
 python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 # Optional: configure ClearML (one-time)
-clearml-init  # use KCL ClearML server settings provided by your course
+clearml-init
 # Train (subset for fast prototyping)
 python src/train.py --config configs/train.yaml
 
