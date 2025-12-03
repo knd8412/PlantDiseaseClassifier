@@ -7,7 +7,7 @@ from PIL import Image
 from torchvision import transforms
 
 from data.transforms import get_transforms
-from src.data.labels import class_names
+from src.data.labels import get_class_names_for_model
 from src.models.convnet_scratch import build_model as build_cnn
 from src.models.resnet import ResNet18Classifier
 from ui.disease_info import disease_info
@@ -29,38 +29,57 @@ ImageNet_std = [0.229, 0.224, 0.225]
 def load_nn_models():
     models = {}
     try:
-        scratch_cnn_model = build_cnn(
-            num_classes=len(class_names),
-            channels=[32, 64, 128],
-            regularisation="batchnorm",
-            dropout=0.3,
-        )
 
         checkpoint = torch.load(cnn_checkpoint, map_location=device)
         state = checkpoint.get("model_state", checkpoint)
+
+        if "head.2.weight" in state:
+            num_classes_cnn = state["head.2.weight"].shape[0]
+        else:
+            num_classes_cnn = 38
+
+        scratch_cnn_model = build_cnn(
+            num_classes=(num_classes_cnn),
+            channels=[32, 64, 128],
+            regularisation="dropout",
+            dropout=0.5,
+        )
+
         scratch_cnn_model.load_state_dict(state)
         scratch_cnn_model.to(device)
         scratch_cnn_model.eval()
         models["Baseline CNN"] = scratch_cnn_model
+        print(f"[UI] Loaded Baseline CNN with num_classes={num_classes_cnn}")
 
     except Exception as e:
         print(f"Exception: {e}")
 
     try:
+
+        checkpoint = torch.load(resnet_checkpoint, map_location=device)
+
+        state = checkpoint.get("model_state", checkpoint)
+
+        if "model.fc.weight" in state:
+            num_classes_resnet = state["model.fc.weight"].shape[0]
+        elif "model.fc.1.weight" in state:
+            num_classes_resnet = state["model.fc.1.weight"].shape[0]
+        else:
+            num_classes_resnet = 38
+
         resnet_model = ResNet18Classifier(
-            num_classes=len(class_names),
+            num_classes=(num_classes_resnet),
             pretrained=False,
             dropout=0.2,
             train_backbone=True,
         )
-        checkpoint = torch.load(resnet_checkpoint, map_location=device)
 
-        state = checkpoint.get("model_state", checkpoint)
         resnet_model.load_state_dict(state)
 
         resnet_model.to(device)
         resnet_model.eval()
         models["ResNet_18"] = resnet_model
+        print(f"[UI] Loaded ResNet18 with num_classes={num_classes_resnet}")
 
     except Exception as e:
         print(f"Exception: {e}")
@@ -78,6 +97,7 @@ def predict(image, model_name):
         return {}
 
     model = models.get(model_name, None)
+    class_names = get_class_names_for_model(model)
     if model is None:
         prob = 1 / len(class_names)
         return {name: prob for name in class_names}
@@ -165,7 +185,7 @@ def explain_top(scores):
 with gr.Blocks(css=styles_css, theme=gr.themes.Soft()) as demo:
     gr.HTML("<h1 id='app-title'> Plant Disease Classifier</h1>")
     gr.HTML(
-        "<p id='app-subtitle'>Upload a leaf image. The model resizes it to 256x256 and returns the top 5 disease probabilities.</p>"
+        "<p id='app-subtitle'>Upload a leaf image to view the top 5 disease probabilities.</p>"
     )
 
     gr.HTML(
