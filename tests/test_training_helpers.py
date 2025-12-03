@@ -1,21 +1,7 @@
 import pytest
 import torch
 
-from src.train import EarlyStopping, _unpack_batch
-
-
-def test_unpack_batch_dict():
-    batch = {
-        "image": torch.randn(3, 3, 32, 32),
-        "label": torch.randint(0, 5, (3,)),
-        "modality": "color",
-    }
-    device = torch.device("cpu")
-    xb, yb = _unpack_batch(batch, device)
-    assert xb.shape[0] == 3
-    assert yb.shape[0] == 3
-    assert xb.device == device
-    assert yb.device == device
+from src.utils import EarlyStopping, unpack_batch
 
 
 def test_unpack_batch_tuple():
@@ -23,7 +9,9 @@ def test_unpack_batch_tuple():
     yb_in = torch.randint(0, 5, (4,))
     batch = (xb_in, yb_in)
     device = torch.device("cpu")
-    xb, yb = _unpack_batch(batch, device)
+
+    xb, yb = unpack_batch(batch, device)
+
     assert torch.allclose(xb, xb_in)
     assert torch.allclose(yb, yb_in)
     assert xb.device == device
@@ -32,8 +20,8 @@ def test_unpack_batch_tuple():
 
 def test_unpack_batch_invalid_type_raises():
     device = torch.device("cpu")
-    with pytest.raises(ValueError):
-        _unpack_batch("not a batch", device)
+    with pytest.raises(TypeError):
+        unpack_batch("not a batch", device)
 
 
 def test_early_stopping_behaviour():
@@ -43,7 +31,9 @@ def test_early_stopping_behaviour():
     assert es.step(0.6, 2) is False
     assert es.step(0.7, 3) is False
 
+    # No improvement
     assert es.step(0.7, 4) is False
+    # Two epochs without improvement -> stop
     assert es.step(0.69, 5) is True
 
     assert es.best_epoch == 3

@@ -42,6 +42,17 @@ def log_scalar(task, title: str, series: str, value: float, step: int):
         print(f"[ClearML] log_scalar error: {e}")
 
 
+def log_figure(task, title: str, series: str, figure, step: int = 0):
+    if task is None:
+        return
+    try:
+        task.get_logger().report_matplotlib_figure(
+            title=title, series=series, figure=figure, iteration=step
+        )
+    except Exception as e:
+        print(f"[ClearML] log_figure error: {e}")
+
+
 def upload_model(task, local_path: str, name: str = "best.pt"):
     if task is None:
         return
@@ -52,12 +63,14 @@ def upload_model(task, local_path: str, name: str = "best.pt"):
     except Exception as e:
         print(f"[ClearML] upload_model error: {e}")
 
+
 def log_image(task, title: str, image_path: str):
     """Log an image to ClearML"""
     if task is None:
         return
     try:
         from clearml import Logger
+
         task.get_logger().report_image(title=title, series=title, local_path=image_path)
     except Exception as e:
         print(f"[ClearML] log_image error for '{title}' at '{image_path}': {e}")

@@ -1,28 +1,18 @@
-import torch
+"""Source module for training and model definitions."""
 
-from src.models.resnet import ResNet18Classifier
+from .clearml_utils import init_task, log_figure, log_scalar, upload_model
+from .trainer import Trainer
+from .utils import Config, EarlyStopping, accuracy, set_seed, unpack_batch
 
-ckpt_path = "src/models/checkpoints/resnet18_best.pt"
-device = torch.device("cpu")
-
-ckpt = torch.load(ckpt_path, map_location=device)
-state = ckpt.get("model_state", ckpt)
-
-# Build a dummy model using your YAML num_classes
-model = ResNet18Classifier(
-    num_classes=39,
-    pretrained=False,
-    dropout=0.2,
-    train_backbone=True,
-)
-
-# Load weights (will fail if wrong number of classes)
-missing, unexpected = model.load_state_dict(state, strict=False)
-
-print("Missing keys:", missing)
-print("Unexpected keys:", unexpected)
-
-# Now inspect the final layer shape
-for name, param in model.named_parameters():
-    if "fc.weight" in name or "classifier.2.weight" in name:
-        print("Head weight shape:", param.shape)
+__all__ = [
+    "Config",
+    "set_seed",
+    "accuracy",
+    "unpack_batch",
+    "EarlyStopping",
+    "Trainer",
+    "init_task",
+    "log_scalar",
+    "log_figure",
+    "upload_model",
+]

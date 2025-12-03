@@ -4,8 +4,15 @@ task_name: "resnet18-medium-clearml-V2"
 tags: ["resnet18", "transfer_learning", "medium_subset"]
 device: "cuda"
 
+dataset:
+  ids:
+    tiny:   "e1277db0a8a445d9b6faa1f3947c1fe0"   # 5%
+    medium: "428add6db5904f48a46c7eb9888b5820"   # 30%
+    large:  "f4c194815a6d4b849fd9eba04645a39e"   # 100%
+
+
 data:
-  source: "hf"
+  source: "clearml"
   clearml_subset: "medium"      # "tiny" | "medium" | "large" as in train.py
   dataset_name: "DScomp380/plant_village"
   data_dir: "/kaggle/input/plantvillage-dataset"  # unused for clearml source, but ok
@@ -30,8 +37,6 @@ data:
 model:
   arch: "resnet18"
   num_classes: 39
-  channels: [32, 64, 128]
-  regularisation: "none"
   dropout: 0.2
   pretrained: true
   train_backbone: true
@@ -55,4 +60,4 @@ clearml:
   project: "KCL-PlantVillage"
   task_name: "resnet18-medium-clearml-v2"
   output_uri: null
-  queue: null
+  queue: "default"
