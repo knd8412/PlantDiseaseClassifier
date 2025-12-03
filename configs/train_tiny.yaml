@@ -18,7 +18,7 @@ data:
   data_dir: "/kaggle/input/plantvillage-dataset"
   modalities: ["color", "grayscale", "segmented"]
   image_size: 256
-  subset_fraction: 0.25 # dead config
+  subset_fraction: 0.25
   val_size: 0.15
   test_size: 0.15
   num_workers: 4

@@ -7,7 +7,7 @@ from PIL import Image
 from torchvision import transforms
 
 from data.transforms import get_transforms
-from src.data.labels import get_class_names_for_model
+from src.data.labels import class_names
 from src.models.convnet_scratch import build_model as build_cnn
 from src.models.resnet import ResNet18Classifier
 from ui.disease_info import disease_info
@@ -18,12 +18,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 img_transform = get_transforms(
     image_size=224, train=False, normalize=True, augment=False
 )["color"]
-resnet_checkpoint = "src/models/checkpoints/resnet18_best.pt"
+resnet_checkpoint = "src/models/checkpoints/resnet_updated.pt"
 cnn_checkpoint = "src/models/checkpoints/best_scratch_cnn.pt"
 models = {}
-
-ImageNet_mean = [0.485, 0.456, 0.406]
-ImageNet_std = [0.229, 0.224, 0.225]
 
 
 def load_nn_models():
@@ -36,7 +33,7 @@ def load_nn_models():
         if "head.2.weight" in state:
             num_classes_cnn = state["head.2.weight"].shape[0]
         else:
-            num_classes_cnn = 38
+            num_classes_cnn = len(class_names)
 
         scratch_cnn_model = build_cnn(
             num_classes=(num_classes_cnn),
@@ -65,7 +62,7 @@ def load_nn_models():
         elif "model.fc.1.weight" in state:
             num_classes_resnet = state["model.fc.1.weight"].shape[0]
         else:
-            num_classes_resnet = 38
+            num_classes_resnet = len(class_names)
 
         resnet_model = ResNet18Classifier(
             num_classes=(num_classes_resnet),
@@ -97,7 +94,6 @@ def predict(image, model_name):
         return {}
 
     model = models.get(model_name, None)
-    class_names = get_class_names_for_model(model)
     if model is None:
         prob = 1 / len(class_names)
         return {name: prob for name in class_names}

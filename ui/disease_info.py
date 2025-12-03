@@ -3,7 +3,6 @@ disease_info = {
     "Apple_black_rot": " Fungal infection producing black, sunken spots on fruit and brown leaf lesions.",
     "Apple_cedar_apple_rust": " Bright orange circular leaf spots caused by a fungus spread via cedar trees.",
     "Apple_healthy": " Leaf appears healthy with no disease symptoms.",
-    "Background_without_leaves": " Image contains background material rather than plant leaves.",
     "Blueberry_healthy": " Healthy blueberry leaf with no visible disease symptoms.",
     "Cherry_powdery_mildew": " White, powdery fungal growth on leaf surfaces, reducing photosynthesis.",
     "Cherry_healthy": " Cherry leaf appears healthy and disease-free.",
