@@ -1,4 +1,4 @@
-class_names = class_names = [
+class_names = [
     "Apple_scab",
     "Apple_black_rot",
     "Apple_cedar_apple_rust",

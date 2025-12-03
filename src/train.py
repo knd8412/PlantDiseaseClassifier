@@ -8,16 +8,14 @@ import yaml
 from data.dataset import load_dataset_and_dataloaders
 from src.clearml_utils import init_task
 from src.models.convnet_scratch import build_model
+from src.models.resnet import ResNet18Classifier
 from src.trainer import Trainer
 from src.utils import Config, set_seed
-
-# Ensure parent directory is in path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/train.yaml")
+    parser.add_argument("--config", type=str, default="configs/train_medium.yaml")
     args = parser.parse_args()
 
     # Fix Windows backslashes so Linux worker can read the path
@@ -71,12 +69,27 @@ def main():
     # ------------------------------------------------------------------
     # Model
     # ------------------------------------------------------------------
-    model = build_model(
-        num_classes=num_classes,
-        channels=cfg.model["channels"],
-        regularisation=cfg.model["regularisation"],
-        dropout=cfg.model["dropout"],
-    )
+
+    arch = cfg.model.get("arch", "scratch")
+
+    if arch == "scratch":
+        model = build_model(
+            num_classes=num_classes,
+            channels=cfg.model["channels"],
+            regularisation=cfg.model["regularisation"],
+            dropout=cfg.model["dropout"],
+        )
+
+    elif arch == "resnet18":
+        model = ResNet18Classifier(
+            num_classes=num_classes,
+            pretrained=cfg.model.get("pretrained", True),
+            dropout=cfg.model.get("dropout", 0.0),
+            train_backbone=cfg.model.get("train_backbone", True),
+        )
+
+    else:
+        raise ValueError(f"Unknown model arch: {arch}")
 
     # ------------------------------------------------------------------
     # Trainer
