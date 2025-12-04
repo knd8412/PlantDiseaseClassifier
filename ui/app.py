@@ -8,6 +8,14 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
+from data.transforms import get_transforms
+from data.labels import get_class_names_for_model
+from src.models.convnet_scratch import build_model as build_cnn
+from src.models.resnet import ResNet18Classifier
+from src.models.ViT import ViT_b_16
+from ui.disease_info import disease_info
+from ui.styles import styles_css
+
 # Configure logging for Hugging Face Spaces
 logging.basicConfig(
     level=logging.INFO,
@@ -27,13 +35,7 @@ def log_and_print(msg, level="INFO"):
     elif level == "WARNING":
         logger.warning(msg)
 
-from data.transforms import get_transforms
-from data.labels import get_class_names_for_model
-from src.models.convnet_scratch import build_model as build_cnn
-from src.models.resnet import ResNet18Classifier
-from src.models.ViT import ViT_b_16
-from ui.disease_info import disease_info
-from ui.styles import styles_css
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
