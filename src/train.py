@@ -1,8 +1,4 @@
 import argparse
-import os
-import sys
-
-import torch
 import yaml
 
 from data.dataset import load_dataset_and_dataloaders
@@ -18,19 +14,17 @@ def main():
     parser.add_argument("--config", type=str, default="configs/train_medium.yaml")
     args = parser.parse_args()
 
-    # Fix Windows backslashes so Linux worker can read the path
+    # Normalize path for cross-platform compatibility
     config_path = args.config.replace("\\", "/")
-    print(f"[Config] Using config file: {config_path}")
+    print(f"Using config: {config_path}")
 
     with open(config_path, "r") as f:
         cfg_dict = yaml.safe_load(f)
 
-    # Build Config
     cfg = Config(**cfg_dict)
+    set_seed(cfg.seed)
 
-    # ------------------------------------------------------------------
-    # ClearML task
-    # ------------------------------------------------------------------
+    # Initialize ClearML tracking
     clearml_cfg = cfg.clearml or {}
     task = init_task(
         enabled=clearml_cfg.get("enabled", False),
@@ -40,38 +34,28 @@ def main():
         params=cfg_dict,
     )
 
-    # Remote execution check
+    # Handle remote execution if configured
     remote_queue = clearml_cfg.get("queue")
-    if task is not None and remote_queue:
+    if task and remote_queue:
         try:
             from clearml import Task as ClearMLTask
-
             if ClearMLTask.running_locally():
-                print(f"[ClearML] Executing remotely on queue '{remote_queue}'")
+                print(f"Submitting to remote queue: {remote_queue}")
                 task.execute_remotely(queue_name=remote_queue, exit_process=True)
         except Exception as e:
-            print(f"[ClearML] execute_remotely failed ({e}), continuing locally.")
+            print(f"Remote execution failed: {e}. Running locally instead.")
 
-    # Seed
-    set_seed(cfg.seed)
-
-    # ------------------------------------------------------------------
-    # Data
-    # ------------------------------------------------------------------
+    # Load data
     subset_key = cfg.data.get("clearml_subset", "tiny")
     train_loader, val_loader, test_loader, class_names = load_dataset_and_dataloaders(
         dataset_size=subset_key,
         config_path=config_path,
     )
     num_classes = len(class_names)
-    print(f"[Data] num_classes = {num_classes}")
+    print(f"Loaded {num_classes} classes")
 
-    # ------------------------------------------------------------------
-    # Model
-    # ------------------------------------------------------------------
-
+    # Build model
     arch = cfg.model.get("arch", "scratch")
-
     if arch == "scratch":
         model = build_model(
             num_classes=num_classes,
@@ -79,7 +63,6 @@ def main():
             regularisation=cfg.model["regularisation"],
             dropout=cfg.model["dropout"],
         )
-
     elif arch == "resnet18":
         model = ResNet18Classifier(
             num_classes=num_classes,
@@ -87,13 +70,10 @@ def main():
             dropout=cfg.model.get("dropout", 0.0),
             train_backbone=cfg.model.get("train_backbone", True),
         )
-
     else:
-        raise ValueError(f"Unknown model arch: {arch}")
+        raise ValueError(f"Unknown architecture: {arch}")
 
-    # ------------------------------------------------------------------
-    # Trainer
-    # ------------------------------------------------------------------
+    # Train
     trainer = Trainer(model, cfg, task)
     trainer.train(train_loader, val_loader, test_loader)
 
