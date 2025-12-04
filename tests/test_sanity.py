@@ -49,8 +49,6 @@ class TestDataSplittingReproducibility:
         train2, val2, test2 = split_dataset(
             samples, test_size=0.15, val_size=0.18, random_state=123
         )
-
-        # They don't have to be completely disjoint, just not identical
         assert train1 != train2 or val1 != val2 or test1 != test2
 
     def test_split_preserves_class_distribution(self):
