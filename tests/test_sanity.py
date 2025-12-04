@@ -1,11 +1,3 @@
-"""
-Sanity tests for PlantDiseaseClassifier repository quality
-
-Implements two sanity tests:
-1. Data splitting reproducibility and stratification using data.utils.split_dataset
-2. Transform shapes validation using data.transforms.get_transforms
-"""
-
 import numpy as np
 import pytest
 import torch
@@ -15,7 +7,6 @@ from data.utils import split_dataset
 
 
 class TestDataSplittingReproducibility:
-    """Test that data splitting is reproducible and roughly preserves class distribution"""
 
     def _make_synthetic_samples(self, n_samples=100, n_classes=5):
         """
@@ -42,7 +33,6 @@ class TestDataSplittingReproducibility:
             samples, test_size=0.15, val_size=0.18, random_state=42
         )
 
-        # Because random_state is fixed, splits should be identical
         assert train1 == train2
         assert val1 == val2
         assert test1 == test2
@@ -69,7 +59,7 @@ class TestDataSplittingReproducibility:
         across train/val/test for an imbalanced dataset.
         """
         n_classes = 5
-        counts = [50, 30, 10, 5, 5]  # highly imbalanced
+        counts = [50, 30, 10, 5, 5]
         labels = []
         for cls, c in enumerate(counts):
             labels.extend([cls] * c)
@@ -95,12 +85,10 @@ class TestDataSplittingReproducibility:
             split_props = split_counts / len(split_labels)
 
             for p_full, p_split in zip(full_props, split_props):
-                # Skip classes that don't exist in the full dataset (shouldn't happen here)
+
                 if p_full == 0:
                     continue
 
-                # We only care that the proportion is in the same ballpark.
-                # Allow 0.5x–1.5x of the original proportion.
                 ratio = p_split / p_full
                 assert 0.5 <= ratio <= 1.5, (
                     f"Class proportion changed too much: full={p_full:.4f}, "
@@ -126,7 +114,6 @@ class TestTransformShapesValidation:
         assert isinstance(transformed, torch.Tensor)
         assert transformed.shape == (3, img_size, img_size)
         assert transformed.dtype == torch.float32
-        # Rough range check after normalization
         assert transformed.min() >= -5.0 and transformed.max() <= 5.0
 
     def test_eval_transform_shapes(self):
@@ -174,5 +161,4 @@ class TestTransformShapesValidation:
         transformed1 = eval_transform(mock_image)
         transformed2 = eval_transform(mock_image)
 
-        # With augment=False, it should be deterministic
         assert torch.allclose(transformed1, transformed2)

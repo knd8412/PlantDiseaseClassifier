@@ -226,11 +226,9 @@ with gr.Blocks(css=styles_css, theme=gr.themes.Soft()) as demo:
                     label="Top 5 predictions table",
                 )
                 gr.HTML(
-                    "<p id='footer-note'> Tip: Crop the photo to focus on a single leaf for best results. </p>"
+                    "<p id='footer-note'> Tip: Crop the photo to focus on a single leaf for better results. </p>"
                 )
                 explanation_html = gr.HTML("")
-
-                gr.HTML("<p id='footer-note'>Incorrect prediction?</p>")
                 flag_btn = gr.Button("Flag this prediction", variant="primary")
                 flag_msg = gr.HTML("")
                 flag_table = gr.Dataframe(
@@ -253,7 +251,7 @@ with gr.Blocks(css=styles_css, theme=gr.themes.Soft()) as demo:
     with gr.Tab("Batch Mode"):
         gr.HTML(
             "<p id='footer-note'>Upload multiple leaf images to analyse them in one go. "
-            "For each file we show the top predicted disease and probability. </p>"
+            "Each file displays the top predicted disease and probability. </p>"
         )
 
         batch_files = gr.File(

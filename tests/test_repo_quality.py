@@ -7,13 +7,12 @@ def test_repo_is_working():
 
 
 def test_disease_info_covers_all_classes():
+    """Checks whether class names and disease_info keys match"""
     c_names = set(class_names)
-    info_keys = set(disease_info.keys())
+    disease_keys = set(disease_info.keys())
 
-    # All class names have a description
-    missing = [c for c in c_names if c not in info_keys]
+    missing = [c for c in c_names if c not in disease_keys]
     assert missing == [], f"Missing descriptions for: {missing}"
 
-    # No extra disease_info keys that aren't real classes
-    extras = [k for k in info_keys if k not in c_names]
+    extras = [name for name in disease_keys if name not in c_names]
     assert extras == [], f"Extra disease_info entries not in class_names: {extras}"

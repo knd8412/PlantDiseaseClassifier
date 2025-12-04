@@ -13,12 +13,12 @@ dataset:
 
 data:
   source: "clearml"
-  clearml_subset: "medium"      # "tiny" | "medium" | "large" as in train.py
+  clearml_subset: "medium"
   dataset_name: "DScomp380/plant_village"
-  data_dir: "/kaggle/input/plantvillage-dataset"  # unused for clearml source, but ok
-  modalities: ["color"]         # IMPORTANT: just RGB for ResNet
-  image_size: 224               # standard for ResNet18
-  subset_fraction: 1.0
+  data_dir: "/kaggle/input/plantvillage-dataset"
+  modalities: ["color"]
+  image_size: 224
+  # subset_fraction: 1.0
   val_size: 0.15
   test_size: 0.15
   num_workers: 4
