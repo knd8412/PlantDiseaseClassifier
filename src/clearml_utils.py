@@ -1,4 +1,6 @@
+import os
 from typing import Any, Dict, Optional
+
 
 def init_task(
     enabled: bool,
@@ -22,7 +24,9 @@ def init_task(
             if params:
                 task.connect(params)
         except Exception as error:
-            print(f"[ClearML] Failed to init task: {error}. Proceeding without ClearML.")
+            print(
+                f"[ClearML] Failed to init task: {error}. Proceeding without ClearML."
+            )
             task = None
     return task
 
@@ -43,10 +47,7 @@ def log_figure(task, title: str, series: str, figure, step: int = 0):
         return
     try:
         task.get_logger().report_matplotlib_figure(
-            title=title,
-            series=series,
-            figure=figure,
-            iteration=step
+            title=title, series=series, figure=figure, iteration=step
         )
     except Exception as error:
         print(f"[ClearML] log_figure error: {error}")
@@ -57,9 +58,7 @@ def upload_model(task, local_path: str, name: str = "best.pt"):
         return
     try:
         task.update_output_model(
-            model_path=local_path,
-            name=name,
-            auto_delete_file=False
+            model_path=local_path, name=name, auto_delete_file=False
         )
     except Exception as error:
         print(f"[ClearML] upload_model error: {error}")
