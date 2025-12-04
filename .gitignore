@@ -8,6 +8,7 @@ outputs/
 .env
 clearml.conf
 /errors/
+/docs/
 .gradio/
 */flagged/
 flagged/
