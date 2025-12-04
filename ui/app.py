@@ -5,6 +5,8 @@ from pathlib import Path
 
 import gradio as gr
 import torch
+from data.labels import get_class_names_for_model
+from data.transforms import get_transforms
 from PIL import Image
 from torchvision import transforms
 
@@ -19,11 +21,12 @@ from ui.styles import styles_css
 # Configure logging for Hugging Face Spaces
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     stream=sys.stderr,
-    force=True
+    force=True,
 )
 logger = logging.getLogger(__name__)
+
 
 def log_and_print(msg, level="INFO"):
     """Log and print to ensure visibility in Hugging Face Spaces"""
@@ -34,7 +37,6 @@ def log_and_print(msg, level="INFO"):
         logger.error(msg)
     elif level == "WARNING":
         logger.warning(msg)
-
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -55,11 +57,13 @@ ImageNet_std = [0.229, 0.224, 0.225]
 def load_nn_models():
     log_and_print("=== Starting model loading ===")
     log_and_print(f"Device: {device}")
-    models = {} 
+    models = {}
     try:
         log_and_print(f"Loading CNN checkpoint from: {cnn_checkpoint}")
         checkpoint = torch.load(cnn_checkpoint, map_location=device)
-        log_and_print(f"CNN checkpoint loaded. Keys: {checkpoint.keys() if isinstance(checkpoint, dict) else 'Not a dict'}")
+        log_and_print(
+            f"CNN checkpoint loaded. Keys: {checkpoint.keys() if isinstance(checkpoint, dict) else 'Not a dict'}"
+        )
         state = checkpoint.get("model_state", checkpoint)
 
         if "head.2.weight" in state:
@@ -78,7 +82,9 @@ def load_nn_models():
         scratch_cnn_model.to(device)
         scratch_cnn_model.eval()
         models["Baseline CNN"] = scratch_cnn_model
-        log_and_print(f"✓ Successfully loaded Baseline CNN with num_classes={num_classes_cnn}")
+        log_and_print(
+            f"✓ Successfully loaded Baseline CNN with num_classes={num_classes_cnn}"
+        )
 
     except Exception as e:
         log_and_print(f"✗ Failed to load Baseline CNN: {e}", "ERROR")
@@ -87,7 +93,9 @@ def load_nn_models():
     try:
         log_and_print(f"Loading ResNet checkpoint from: {resnet_checkpoint}")
         checkpoint = torch.load(resnet_checkpoint, map_location=device)
-        log_and_print(f"ResNet checkpoint loaded. Keys: {checkpoint.keys() if isinstance(checkpoint, dict) else 'Not a dict'}")
+        log_and_print(
+            f"ResNet checkpoint loaded. Keys: {checkpoint.keys() if isinstance(checkpoint, dict) else 'Not a dict'}"
+        )
         state = checkpoint.get("model_state", checkpoint)
 
         if "model.fc.weight" in state:
@@ -109,7 +117,9 @@ def load_nn_models():
         resnet_model.to(device)
         resnet_model.eval()
         models["ResNet_18"] = resnet_model
-        log_and_print(f"✓ Successfully loaded ResNet18 with num_classes={num_classes_resnet}")
+        log_and_print(
+            f"✓ Successfully loaded ResNet18 with num_classes={num_classes_resnet}"
+        )
 
     except Exception as e:
         log_and_print(f"✗ Failed to load ResNet18: {e}", "ERROR")
@@ -119,8 +129,10 @@ def load_nn_models():
         log_and_print(f"Loading ViT checkpoint from: {vit_checkpoint}")
         checkpoint = torch.load(vit_checkpoint, map_location=device)
         state = torch.load(vit_checkpoint, map_location=device)
-        log_and_print(f"ViT checkpoint loaded. Keys: {state.keys() if isinstance(state, dict) else 'Not a dict'}")
-        
+        log_and_print(
+            f"ViT checkpoint loaded. Keys: {state.keys() if isinstance(state, dict) else 'Not a dict'}"
+        )
+
         new_state = {}
         for k, v in state.items():
             new_state[f"model.{k}"] = v
@@ -130,13 +142,17 @@ def load_nn_models():
         vit_model.load_state_dict(new_state)
         vit_model.eval()
         models["ViT_b_16"] = vit_model
-        log_and_print(f"✓ Successfully loaded ViT_b_16 with num_classes={num_classes_vit}")
+        log_and_print(
+            f"✓ Successfully loaded ViT_b_16 with num_classes={num_classes_vit}"
+        )
 
     except Exception as e:
         log_and_print(f"✗ Failed to load ViT_b_16: {e}", "ERROR")
         logger.error(f"✗ Failed to load ViT_b_16: {e}", exc_info=True)
 
-    log_and_print(f"=== Model loading complete. Loaded models: {list(models.keys())} ===")
+    log_and_print(
+        f"=== Model loading complete. Loaded models: {list(models.keys())} ==="
+    )
     return models
 
 
@@ -156,23 +172,36 @@ def predict(image, model_name):
     class_names = get_class_names_for_model(model)
     log_and_print(f"Number of classes: {len(class_names)}")
     if model is None:
-        log_and_print(f"Model '{model_name}' not found in loaded models: {list(models.keys())}", "ERROR")
+        log_and_print(
+            f"Model '{model_name}' not found in loaded models: {list(models.keys())}",
+            "ERROR",
+        )
         prob = 1 / len(class_names)
         return {name: prob for name in class_names}
 
     try:
-        log_and_print(f"Image type: {type(image)}, mode: {image.mode if hasattr(image, 'mode') else 'N/A'}, size: {image.size if hasattr(image, 'size') else 'N/A'}")
+        log_and_print(
+            f"Image type: {type(image)}, mode: {image.mode if hasattr(image, 'mode') else 'N/A'}, size: {image.size if hasattr(image, 'size') else 'N/A'}"
+        )
         img_tensor = img_transform(image).unsqueeze(0).to(device)
-        log_and_print(f"Tensor shape: {img_tensor.shape}, dtype: {img_tensor.dtype}, device: {img_tensor.device}")
-        log_and_print(f"Tensor stats - min: {img_tensor.min():.3f}, max: {img_tensor.max():.3f}, mean: {img_tensor.mean():.3f}")
+        log_and_print(
+            f"Tensor shape: {img_tensor.shape}, dtype: {img_tensor.dtype}, device: {img_tensor.device}"
+        )
+        log_and_print(
+            f"Tensor stats - min: {img_tensor.min():.3f}, max: {img_tensor.max():.3f}, mean: {img_tensor.mean():.3f}"
+        )
 
         with torch.no_grad():
             log_and_print("Running forward pass...")
             logits = model(img_tensor)[0]
-            log_and_print(f"Logits shape: {logits.shape}, min: {logits.min():.3f}, max: {logits.max():.3f}")
+            log_and_print(
+                f"Logits shape: {logits.shape}, min: {logits.min():.3f}, max: {logits.max():.3f}"
+            )
 
         probabilities = torch.softmax(logits, dim=0)
-        log_and_print(f"Probabilities - min: {probabilities.min():.3f}, max: {probabilities.max():.3f}, sum: {probabilities.sum():.3f}")
+        log_and_print(
+            f"Probabilities - min: {probabilities.min():.3f}, max: {probabilities.max():.3f}, sum: {probabilities.sum():.3f}"
+        )
         top_probs, top_indices = torch.topk(probabilities, k=5)
         result = {}
 
@@ -181,7 +210,9 @@ def predict(image, model_name):
             result[class_name] = float(p)
             log_and_print(f"  Top prediction: {class_name} = {p:.4f}")
 
-        log_and_print(f"=== Prediction complete. Top class: {max(result, key=result.get)} ===")
+        log_and_print(
+            f"=== Prediction complete. Top class: {max(result, key=result.get)} ==="
+        )
         return result
     except Exception as e:
         log_and_print(f"Error during prediction: {e}", "ERROR")
@@ -190,7 +221,9 @@ def predict(image, model_name):
 
 
 def predict_batch(files, model_name):
-    log_and_print(f"\n=== Starting batch prediction with {len(files) if files else 0} files ===")
+    log_and_print(
+        f"\n=== Starting batch prediction with {len(files) if files else 0} files ==="
+    )
     if not files:
         log_and_print("No files provided for batch prediction", "WARNING")
         return []
@@ -237,7 +270,7 @@ def flag_prediction(image, scores):
     if image is None or not scores:
         return (
             "<p id='footer-note'> No prediction available to flag. </p>",
-            [[]], 
+            [[]],
         )
 
     top_class = max(scores, key=scores.get)
@@ -273,7 +306,9 @@ with gr.Blocks(css=styles_css, theme=gr.themes.Soft()) as demo:
     with gr.Tab("Single Image"):
 
         selected_model = gr.Radio(
-            ["Baseline CNN", "ResNet_18","ViT_b_16"], value="Baseline CNN", label="Model"
+            ["Baseline CNN", "ResNet_18", "ViT_b_16"],
+            value="Baseline CNN",
+            label="Model",
         )
         with gr.Row():
             with gr.Column(scale=3, elem_classes=["card"]):

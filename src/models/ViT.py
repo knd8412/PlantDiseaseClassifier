@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from torchvision.models import vit_b_16, ViT_B_16_Weights
+from torchvision.models import ViT_B_16_Weights, vit_b_16
+
 
 class ViT_b_16(nn.Module):
     def __init__(self, num_classes=39, dropout=0.3, device="cpu"):
@@ -20,7 +21,7 @@ class ViT_b_16(nn.Module):
             nn.Linear(in_features, 512),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(512, num_classes)
+            nn.Linear(512, num_classes),
         )
 
         self.model = model
