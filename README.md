@@ -1,9 +1,60 @@
+# PlantDiseaseClassifier
+
+## 👥 Team Information
+
+| **Team Number** | **Team 14** |
+|-----------------|-------------|
+
+### Team Members
+
+| Name | Student ID |
+|------|------------|
+| Kamyar Nadarkhanidinehkaboudi | k24063781 |
+| Aditya Ranjan | k23149795 |
+| Dmytro Syzonenko | k24000626 |
+| Jaroslav Rakoto-Miklas | k23099462 |
+| Vishal Thakwani | k24059655 |
+
+---
+
+## 🔗 Project Links
+
+| Resource | Link |
+|----------|------|
+| **Git Repository** | `https://github.kcl.ac.uk/k23149795/PlantDiseaseClassifier/tree/main` |
+| **Deployed App (Hugging Face Spaces)** | `https://huggingface.co/spaces/Vinuit/PlantDiseaseCLassifier` |
+| **Baseline CNN** | `c0422871afdd43a4905b6801890f3324` |
+| **Resnet18** | `d6035906610145b7b2cfeca0fb1fa155` |
+
+---
+
+## 🚀 Run Locally
+
+```bash
+# 1. Create and activate virtual environment
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# Linux/Mac:
+source .venv/bin/activate
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Run the Gradio app
+python -m ui.app
+```
+
+The app will launch in your browser at `http://localhost:7860`.
+
+---
+
 ## 📘 Overview
 
 The goal of this project is to build an AI model capable of detecting plant diseases from leaf images.
 This is an **image classification problem** — the system receives a leaf picture and predicts the corresponding **plant–disease class** (ex *Tomato_Early_Blight* or *Grape_Black_Rot*).
 
-# PlantDiseaseClassifier (Scratch CNN + Early Stopping + ClearML)
+## PlantDiseaseClassifier (Scratch CNN + Early Stopping + ClearML)
 A plant disease detector from leaf photos using the PlantVillage dataset (39 classes, 55,400 images at 256×256).
 
 📊 **Project Board:** [View on GitHub Projects](https://github.com/<username>/<repo-name>/projects)

@@ -55,8 +55,10 @@ Outputs:
 """
 
 import argparse
+import inspect
 import json
 import os
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -123,7 +125,6 @@ if _MISSING_DEPS:
     print("=" * 60)
     sys.exit(1)
 
-import shutil
 
 # Optional tqdm for progress bars (graceful fallback if not installed)
 try:
@@ -152,12 +153,12 @@ except ImportError:
 # Import transforms - handle both old (src/data) and new (data/) module locations
 # The root data/ module returns a dict with 'color', 'grayscale', 'segmented' keys
 # and uses 'image_size' parameter, which is what train.py uses
-import inspect
 
 try:
     # Try importing from project root first (add parent dir to path if needed)
     import sys
-    from pathlib import Path
+
+    # from pathlib import Path
 
     project_root = Path(__file__).parent.parent
     if str(project_root) not in sys.path:
@@ -298,7 +299,7 @@ def infer_architecture_from_state_dict(state_dict: dict) -> Tuple[str, dict]:
         # Pattern: backbone.{block_idx}.conv.1.weight for BatchNorm (if present)
         # Conv->BN->ReLU->Conv->BN->ReLU means index 1 would be BN
         has_batchnorm = (
-            f"backbone.0.conv.1.weight" in state_dict
+            "backbone.0.conv.1.weight" in state_dict
             and state_dict["backbone.0.conv.1.weight"].dim() == 1
         )  # BN weight is 1D
 
@@ -381,7 +382,7 @@ def load_dataset_robust(dataset_name: str):
             or "offline" in error_msg
             or "resolve" in error_msg
         ):
-            print(f"[WARNING] Network unavailable, attempting to use cached dataset...")
+            print("[WARNING] Network unavailable, attempting to use cached dataset...")
             old_offline = os.environ.get("HF_DATASETS_OFFLINE")
             try:
                 os.environ["HF_DATASETS_OFFLINE"] = "1"
@@ -894,7 +895,7 @@ def evaluate_model(
         print(
             f"[WARNING] Label names count ({len(label_names)}) doesn't match model output classes ({num_classes})"
         )
-        print(f"[WARNING] Generating generic class names instead")
+        print("[WARNING] Generating generic class names instead")
         label_names = [f"Class_{i}" for i in range(num_classes)]
     elif label_names is None:
         label_names = [f"Class_{i}" for i in range(num_classes)]
@@ -1573,7 +1574,7 @@ Examples:
         dataset_num_classes = len(dataset_labels) if dataset_labels else 0
 
         if dataset_num_classes > 0 and model_num_classes != dataset_num_classes:
-            print(f"\n[WARNING] Class count mismatch detected!")
+            print("\n[WARNING] Class count mismatch detected!")
             print(f"  Model expects: {model_num_classes} classes")
             print(f"  Dataset has:   {dataset_num_classes} classes")
 
@@ -1636,7 +1637,7 @@ Examples:
 
             print(f"[Data] Filtering {len(exclude_indices)} classes...")
             full = full.filter(filter_exclude)
-            print(f"[Data] Remapping labels...")
+            print("[Data] Remapping labels...")
             full = full.map(map_labels)
 
             label_names_override = [all_labels[i] for i in keep_indices]
@@ -1764,10 +1765,10 @@ Examples:
     )
 
     # Print results
-    print(f"\n=== Evaluation Results ===")
+    print("\n=== Evaluation Results ===")
     print(f"Overall Accuracy: {results['overall_accuracy']:.4f}")
     print(f"Top-5 Accuracy: {results['top5_accuracy']:.4f}")
-    print(f"\nPer-class metrics:")
+    print("\nPer-class metrics:")
     if results["label_names"] and len(results["label_names"]) == len(
         results["per_class_precision"]
     ):

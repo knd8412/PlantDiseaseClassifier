@@ -47,12 +47,13 @@ def show_batch(dataloader, class_names, num_images=8, denorm=True):
     batch = next(iter(dataloader))
 
     if isinstance(batch, dict):
-        images = batch["image"][:num_images]
-        labels = batch["label"][:num_images]
+        images = batch.get("image") or batch.get("images")
+        labels = batch.get("label") or batch.get("labels")
         modalities = batch.get("modality", ["unknown"] * num_images)[:num_images]
 
     elif isinstance(batch, (list, tuple)):
-        images, labels = batch[:2]
+        # Typical dataloader output for datasets returning (image, label)
+        images, labels = batch[0], batch[1]
         images = images[:num_images]
         labels = labels[:num_images]
         modalities = ["unknown"] * len(labels)
@@ -82,14 +83,23 @@ def show_batch(dataloader, class_names, num_images=8, denorm=True):
                 # Try ImageNet normalization first
                 img = denormalize_image(img, IMAGENET_MEAN, IMAGENET_STD)
             else:
-                img = img.permute(1, 2, 0).cpu().numpy()
+                # If image is a tensor, move C dimension last; otherwise accept numpy/PIL
+                if isinstance(img, torch.Tensor):
+                    img = img.permute(1, 2, 0).cpu().numpy()
+                else:
+                    img = np.array(img)
                 img = np.clip(img, 0, 1)
 
             ax.imshow(img)
 
-            label_name = class_names[labels[idx].item()]
+            # Handle label that may be tensor/scalar/int
+            lbl = labels[idx]
+            label_id = int(lbl.item()) if hasattr(lbl, "item") else int(lbl)
+            label_name = class_names[label_id]
             modality = (
-                modalities[idx] if isinstance(modalities[idx], str) else modalities[idx]
+                modalities[idx]
+                if isinstance(modalities[idx], str)
+                else str(modalities[idx])
             )
             ax.set_title(f"{label_name}\n({modality})", fontsize=9)
             ax.axis("off")

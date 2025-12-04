@@ -1,7 +1,11 @@
 import argparse
-import yaml
+import os
+import sys
 
+import torch
+import yaml
 from data.dataset import load_dataset_and_dataloaders
+
 from src.clearml_utils import init_task
 from src.models.convnet_scratch import build_model
 from src.models.resnet import ResNet18Classifier
@@ -39,6 +43,7 @@ def main():
     if task and remote_queue:
         try:
             from clearml import Task as ClearMLTask
+
             if ClearMLTask.running_locally():
                 print(f"Submitting to remote queue: {remote_queue}")
                 task.execute_remotely(queue_name=remote_queue, exit_process=True)

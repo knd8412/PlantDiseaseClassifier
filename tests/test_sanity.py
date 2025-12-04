@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 import torch
-
 from data.transforms import get_transforms
 from data.utils import split_dataset
 

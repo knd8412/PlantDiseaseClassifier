@@ -1,7 +1,9 @@
 import random
-import torch
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
+import torch
+
 
 # ----------------------------------------------------------------------
 # Config dataclass
@@ -18,6 +20,7 @@ class Config:
     train: Dict[str, Any]
     clearml: Dict[str, Any]
     dataset: Optional[Dict[str, Any]] = None
+
 
 # ----------------------------------------------------------------------
 # Early stopping
@@ -41,6 +44,7 @@ class EarlyStopping:
             self.counter += 1
             return self.counter >= self.patience
 
+
 # ----------------------------------------------------------------------
 # Utils
 # ----------------------------------------------------------------------
@@ -51,9 +55,11 @@ def set_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
 def accuracy(logits, targets):
     preds = torch.argmax(logits, dim=1)
     return (preds == targets).float().mean().item()
+
 
 def unpack_batch(batch, device):
     """

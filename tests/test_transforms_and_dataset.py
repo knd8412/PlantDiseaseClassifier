@@ -2,10 +2,9 @@ import os
 from pathlib import Path
 
 import torch
-from PIL import Image
-
 from data.dataset import MultiModalityDataset
 from data.transforms import get_transforms
+from PIL import Image
 
 
 def make_dummy_jpg(path, size=(32, 32)):

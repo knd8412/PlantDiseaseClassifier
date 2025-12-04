@@ -1,7 +1,5 @@
 from pathlib import Path
 
-from PIL import Image
-
 from data.utils import (
     balance_dataset_uniform,
     build_class_mapping,
@@ -11,6 +9,7 @@ from data.utils import (
     make_subset,
     split_dataset,
 )
+from PIL import Image
 
 
 def make_classdir_images(root, modality, class_name, n=3):

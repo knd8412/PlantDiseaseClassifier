@@ -1,4 +1,5 @@
 from typing import List, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -64,7 +65,7 @@ class SmallCNN(nn.Module):
 def build_model(
     num_classes: int,
     channels: Optional[List[int]] = None,
-    regularisation: str = "none",   # "none" | "dropout" | "batchnorm"
+    regularisation: str = "none",  # "none" | "dropout" | "batchnorm"
     dropout: float = 0.3,
 ):
     """
