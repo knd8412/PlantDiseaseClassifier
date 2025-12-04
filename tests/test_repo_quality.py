@@ -1,4 +1,4 @@
-from src.data.labels import class_names
+from data.labels import class_names
 from ui.disease_info import disease_info
 
 

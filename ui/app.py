@@ -28,7 +28,7 @@ def log_and_print(msg, level="INFO"):
         logger.warning(msg)
 
 from data.transforms import get_transforms
-from src.data.labels import get_class_names_for_model
+from data.labels import get_class_names_for_model
 from src.models.convnet_scratch import build_model as build_cnn
 from src.models.resnet import ResNet18Classifier
 from src.models.ViT import ViT_b_16
