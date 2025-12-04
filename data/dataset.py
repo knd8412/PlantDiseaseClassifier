@@ -5,9 +5,6 @@ PyTorch Dataset class for multi-modality plant disease classification.
 import torch
 import yaml
 from clearml import Dataset
-from PIL import Image
-from torch.utils.data import DataLoader, WeightedRandomSampler
-
 from data.transforms import get_transforms
 from data.utils import (
     build_class_mapping,
@@ -16,6 +13,8 @@ from data.utils import (
     split_dataset,
 )
 from data.visualization import show_batch
+from PIL import Image
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 
 class MultiModalityDataset(Dataset):

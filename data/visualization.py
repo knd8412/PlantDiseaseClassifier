@@ -96,7 +96,11 @@ def show_batch(dataloader, class_names, num_images=8, denorm=True):
             lbl = labels[idx]
             label_id = int(lbl.item()) if hasattr(lbl, "item") else int(lbl)
             label_name = class_names[label_id]
-            modality = modalities[idx] if isinstance(modalities[idx], str) else str(modalities[idx])
+            modality = (
+                modalities[idx]
+                if isinstance(modalities[idx], str)
+                else str(modalities[idx])
+            )
             ax.set_title(f"{label_name}\n({modality})", fontsize=9)
             ax.axis("off")
         else:

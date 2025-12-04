@@ -4,8 +4,8 @@ import sys
 
 import torch
 import yaml
-
 from data.dataset import load_dataset_and_dataloaders
+
 from src.clearml_utils import init_task
 from src.models.convnet_scratch import build_model
 from src.models.resnet import ResNet18Classifier

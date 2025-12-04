@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from clearml import Logger, Task
-
 from data.dataset import load_dataset_and_dataloaders, show_batch
 
 # -----------------------------
