@@ -165,7 +165,7 @@ class Trainer:
             except Exception:
                 pass
 
-        print(f"Training complete!")
+        print("Training complete!")
         print(f"Best validation accuracy: {best_val_acc:.4f} at epoch {best_epoch}")
         print(f"Model saved to: {best_path}")
 
