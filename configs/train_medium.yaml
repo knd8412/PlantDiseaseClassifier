@@ -1,0 +1,64 @@
+seed: 42
+project_name: "PlantVillage-Baseline"
+task_name: "baseline-scratch-reg-dropout-medium"
+tags: ["arch:v1", "reg:none", "subset:medium"]
+device: "cuda"
+
+dataset:
+  ids:
+    tiny:   "e1277db0a8a445d9b6faa1f3947c1fe0"   # 5% subset
+    medium: "428add6db5904f48a46c7eb9888b5820"   # 30% subset
+    large:  "f4c194815a6d4b849fd9eba04645a39e"   # 100% subset
+
+
+data:
+  source: "clearml"
+  clearml_subset: "medium"
+  dataset_name: "DScomp380/plant_village"
+  data_dir: "/kaggle/input/plantvillage-dataset"
+  modalities: ["color", "grayscale", "segmented"]
+  image_size: 256
+  # subset_fraction: 0.25
+  val_size: 0.15
+  test_size: 0.15
+  num_workers: 4
+  normalize: true
+  augment: true
+  balance_strategy: null
+
+  balance_config:
+    seed: 42
+
+    replacement: true
+
+    weight_power: 1.0
+    sampling_strategy: "none"
+    use_weighted_loss: true
+
+model:
+  arch: "scratch"
+  num_classes: 39
+  channels: [32, 64, 128]
+  regularisation: "dropout"
+  dropout: 0.5
+
+train:
+  epochs: 30
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 0.001
+  weight_decay: 0.0001
+
+  patience: 3
+  min_delta: 0.0
+
+  scheduler:
+    type: "cosine"
+    T_max: 30
+
+clearml:
+  enabled: true
+  project: "KCL-PlantVillage"
+  task_name: "baseline-scratch"
+  output_uri: null
+  queue: "default"
