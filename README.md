@@ -1,22 +1,5 @@
 # PlantDiseaseClassifier
 
-## 👥 Team Information
-
-| **Team Number** | **Team 14** |
-|-----------------|-------------|
-
-### Team Members
-
-| Name | Student ID |
-|------|------------|
-| Kamyar Nadarkhanidinehkaboudi | k24063781 |
-| Aditya Ranjan | k23149795 |
-| Dmytro Syzonenko | k24000626 |
-| Jaroslav Rakoto-Miklas | k23099462 |
-| Vishal Thakwani | k24059655 |
-
----
-
 ## 🔗 Project Links
 
 | Resource | Link |
