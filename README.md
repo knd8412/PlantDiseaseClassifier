@@ -4,7 +4,7 @@
 
 | Resource | Link |
 |----------|------|
-| **Git Repository** | `https://github.kcl.ac.uk/k23149795/PlantDiseaseClassifier/tree/main` |
+| **Git Repository** | `https://github.com/knd8412/PlantDiseaseClassifier` |
 | **Deployed App (Hugging Face Spaces)** | `https://huggingface.co/spaces/Vinuit/PlantDiseaseCLassifier` |
 | **Baseline CNN** | `c0422871afdd43a4905b6801890f3324` |
 | **Resnet18** | `d6035906610145b7b2cfeca0fb1fa155` |
