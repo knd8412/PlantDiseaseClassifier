@@ -1,166 +1,204 @@
-# PlantDiseaseClassifier
+# 🌿 PlantDiseaseClassifier
 
-## 🔗 Project Links
+> **AI-powered plant disease detection from leaf images** — built with PyTorch, tracked with ClearML, and deployed on Hugging Face Spaces.
+
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-EE4C2C?logo=pytorch)](https://pytorch.org/)
+[![Gradio](https://img.shields.io/badge/Interface-Gradio-orange?logo=gradio)](https://gradio.app/)
+[![ClearML](https://img.shields.io/badge/Tracking-ClearML-purple)](https://clear.ml/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=githubactions)](https://github.com/features/actions)
+
+---
+
+## 🔗 Quick Links
 
 | Resource | Link |
-|----------|------|
-| **Git Repository** | `https://github.com/knd8412/PlantDiseaseClassifier` |
-| **Deployed App (Hugging Face Spaces)** | `https://huggingface.co/spaces/Vinuit/PlantDiseaseCLassifier` |
-| **Baseline CNN** | `c0422871afdd43a4905b6801890f3324` |
-| **Resnet18** | `d6035906610145b7b2cfeca0fb1fa155` |
+|---|---|
+| 📁 GitHub Repository | [knd8412/PlantDiseaseClassifier](https://github.com/knd8412/PlantDiseaseClassifier) |
+| 🚀 Live Demo (Hugging Face) | [Vinuit/PlantDiseaseClassifier](https://huggingface.co/spaces/Vinuit/PlantDiseaseCLassifier) |
+| 🧪 Baseline CNN Experiment | `c0422871afdd43a4905b6801890f3324` |
+| 🧠 ResNet18 Experiment | `d6035906610145b7b2cfeca0fb1fa155` |
 
 ---
 
-## 🚀 Run Locally
+## 📖 Overview
 
-```bash
-# 1. Create and activate virtual environment
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/Mac:
-source .venv/bin/activate
+**PlantDiseaseClassifier** is an end-to-end machine learning system that identifies plant diseases from photographs of leaves. Upload a photo — get a diagnosis.
 
-# 2. Install dependencies
-pip install -r requirements.txt
+The model is trained on the [PlantVillage dataset](https://huggingface.co/datasets/), which contains **55,400 images** across **39 plant–disease classes** at 256×256 resolution. Examples of classes include `Tomato_Early_Blight`, `Grape_Black_Rot`, and `Apple_Cedar_Rust`.
 
-# 3. Run the Gradio app
-python -m ui.app
+The project covers the full ML lifecycle:
+
+```
+Raw Data → Preprocessing → Model Training → Experiment Tracking → Evaluation → Deployment
 ```
 
-The app will launch in your browser at `http://localhost:7860`.
-
 ---
 
-## 📘 Overview
+## ✨ Features
 
-The goal of this project is to build an AI model capable of detecting plant diseases from leaf images.
-This is an **image classification problem** — the system receives a leaf picture and predicts the corresponding **plant–disease class** (ex *Tomato_Early_Blight* or *Grape_Black_Rot*).
-
-## PlantDiseaseClassifier (Scratch CNN + Early Stopping + ClearML)
-A plant disease detector from leaf photos using the PlantVillage dataset (39 classes, 55,400 images at 256×256).
-
-📊 **Project Board:** [View on GitHub Projects](https://github.com/<username>/<repo-name>/projects)
-
-> An AI-powered system that detects plant diseases from leaf images using deep learning, with full experiment tracking, CI/CD automation, and a deployable Gradio interface.
-
-The workflow covers the entire machine learning lifecycle:
-1. **Data preparation** (using the [PlantVillage dataset](https://huggingface.co/datasets/plant_village))
-2. **Model development and training** (PyTorch CNN + transfer learning baseline)
-3. **Experiment tracking** (ClearML)
-4. **Evaluation and comparison**
-5. **Deployment** (Gradio UI on Hugging Face Spaces)
+- 🧠 **Custom CNN** trained from scratch on PlantVillage
+- 🔄 **Transfer Learning** option with ResNet18
+- 📊 **Real-time experiment tracking** via ClearML (metrics, checkpoints, hyperparameters)
+- 🖼️ **Data augmentation** and normalization pipeline
+- 🌐 **Interactive Gradio web app** — upload any leaf photo and get a prediction
+- 📦 **Batch classification** support
+- 🚀 **Public deployment** on Hugging Face Spaces
+- 🔁 **CI/CD automation** via self-hosted GitHub Actions runner
+- 🪝 **Pre-commit hooks** for code quality and style (flake8)
+- 🔍 **Architecture auto-detection** — evaluation script figures out your model type automatically
+- 🗂️ **Error gallery** — visual analysis of worst misclassification patterns
 
 ---
 
 ## ⚙️ Tech Stack
 
 | Component | Technology |
-|------------|-------------|
-| Framework | PyTorch |
+|---|---|
+| Deep Learning Framework | PyTorch |
 | Experiment Tracking | ClearML (KCL-hosted server) |
-| Interface | Gradio |
+| Web Interface | Gradio |
 | Deployment | Hugging Face Spaces |
 | CI/CD | GitHub Actions (self-hosted runner) |
-| Linting & Testing | flake8, pytest, pre-commit hooks |
-| Version Control | Git / GitHub Enterprise (KCL) |
+| Linting | flake8 |
+| Testing | pytest |
+| Code Quality | pre-commit hooks |
+| Version Control | Git / GitHub |
 
 ---
 
-## 🧠 Features
+## 🗂️ Project Structure
 
-- Custom CNN model for image classification
-- Optional transfer learning with ResNet18
-- Data augmentation and normalization
-- Real-time experiment tracking and metric comparison with ClearML
-- Automatically logged model checkpoints and hyperparameters
-- Interactive Gradio web app for leaf image uploads
-- Batch image classification support
-- Public deployment on Hugging Face Spaces
-- Fully automated CI/CD via self-hosted GitHub Actions runner
-- Pre-commit hooks enforcing code quality and style
-
-
-## Quickstart
-
-```bash
-python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-# Optional: configure ClearML (one-time)
-clearml-init
-# Train (subset for fast prototyping)
-python src/train.py --config configs/train.yaml
-
-# Evaluate the trained model
-python src/evaluate.py --model outputs/best.pt --split val
+```
+PlantDiseaseClassifier/
+├── .github/              # GitHub Actions CI/CD workflows
+├── configs/              # YAML configuration files for training/evaluation
+├── data/                 # Dataset utilities and preprocessing scripts
+├── datasetNotebooks/     # Exploratory data analysis notebooks
+├── examples/             # Sample images for testing
+├── src/
+│   ├── train.py          # Main training script
+│   └── evaluate.py       # Evaluation script with error gallery
+├── tests/                # pytest test suite
+├── ui/
+│   └── app.py            # Gradio web application
+├── requirements.txt      # Python dependencies
+├── pyproject.toml        # Project metadata and tooling config
+├── .pre-commit-config.yaml
+├── .flake8
+└── README.md
 ```
 
-The first run will download the dataset from the Hugging Face Hub.
-If you are in an offline environment, pre-download the dataset or cache it locally.
+---
 
-## Outputs
-- `outputs/best.pt` — best model weights (by validation accuracy).
-- `outputs/metrics.json` — last run metrics summary.
-- ClearML: check your project dashboard for the task, metrics, and registered model.
+## 🚀 Getting Started
 
-### Evaluation Outputs
-- `confusion_matrix.png` — visual confusion matrix heatmap
-- `errors/` directory — error gallery with misclassified samples (when enabled)
-- JSON results file — comprehensive metrics and per-class statistics
-
-## Model Evaluation
-
-The project includes a comprehensive evaluation script that provides detailed metrics and error analysis for trained models.
-
-**Dataset:** The PlantVillage dataset downloads automatically on first run and is cached locally (~/.cache/huggingface/datasets/). Subsequent runs use the cached version.
-
-### Architecture Auto-Detection
-
-The evaluation script automatically detects the model architecture using a 3-step fallback:
-
-1. **Checkpoint metadata** — If the checkpoint was saved by the updated `train.py`, it contains embedded `model_config`
-2. **Auto-inference** — Analyzes state_dict weight shapes and key patterns to determine architecture (ConvNet vs ResNet18)
-3. **Config file fallback** — Uses `--config` or default `configs/train.yaml` as last resort
-
-This means `--config` is now **optional** for most checkpoints!
+### 1. Clone the Repository
 
 ```bash
-# ✅ Just specify the model - architecture is auto-detected
+git clone https://github.com/knd8412/PlantDiseaseClassifier.git
+cd PlantDiseaseClassifier
+```
+
+### 2. Create and Activate a Virtual Environment
+
+```bash
+python -m venv .venv
+
+# Windows:
+.venv\Scripts\activate
+
+# Linux / macOS:
+source .venv/bin/activate
+```
+
+### 3. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. (Optional) Set Up ClearML Experiment Tracking
+
+Only needed once. Skip if you don't need experiment tracking.
+
+```bash
+clearml-init
+```
+
+### 5. Launch the Web App
+
+```bash
+python -m ui.app
+```
+
+The Gradio app will open in your browser at **http://localhost:7860**.
+
+---
+
+## 🏋️ Training a Model
+
+```bash
+# Train using default config (25% subset for fast prototyping)
+python src/train.py --config configs/train.yaml
+```
+
+The dataset downloads automatically from Hugging Face Hub on first run and is cached at `~/.cache/huggingface/datasets/`. Subsequent runs use the cache — no re-download needed.
+
+> 💡 **Tip:** Adjust `batch_size` in the config to fit your GPU/CPU memory. To force CPU, set `device: cpu` in the config file.
+
+**Outputs after training:**
+
+| File | Description |
+|---|---|
+| `outputs/best.pt` | Best model weights (by validation accuracy) |
+| `outputs/metrics.json` | Summary of the last run's metrics |
+| ClearML dashboard | Full task logs, metrics curves, and registered model |
+
+---
+
+## 📊 Evaluating a Model
+
+The evaluation script **auto-detects the model architecture** using a 3-step fallback:
+
+1. **Checkpoint metadata** — reads embedded `model_config` if saved by the updated `train.py`
+2. **Auto-inference** — analyzes `state_dict` weight shapes and key patterns
+3. **Config file fallback** — uses `--config` or `configs/train.yaml` as last resort
+
+```bash
+# Basic evaluation (architecture auto-detected)
 python src/evaluate.py --model outputs/best.pt --split val
 
-# ✅ Works with any architecture (ConvNet, ResNet18, etc.)
-python src/evaluate.py --model outputs/resnet18_best.pt --split val
+# Evaluate on the test split
+python src/evaluate.py --model outputs/best.pt --split test
 
-# Optional: Override with specific config if needed
+# Validate your setup without running full evaluation
+python src/evaluate.py --model outputs/best.pt --dry-run
+
+# Skip error gallery for faster runs
+python src/evaluate.py --model outputs/best.pt --split val --no-error-gallery
+
+# Override architecture with a specific config (for old checkpoints)
 python src/evaluate.py --model outputs/best.pt --config configs/train_quick_test.yaml --split val
 ```
 
-**Tip:** Use `--dry-run` to validate your setup before running full evaluation:
-```bash
-python src/evaluate.py --model outputs/best.pt --dry-run
-```
+### Evaluation Output
 
-### Usage
+| Output | Description |
+|---|---|
+| Overall Accuracy | % of correctly classified samples |
+| Top-5 Accuracy | % where correct class appears in top 5 predictions |
+| Per-class Metrics | Precision, recall, F1-score for each disease class |
+| `confusion_matrix.png` | Visual heatmap of classification patterns |
+| `errors/` directory | Error gallery with misclassified samples |
+| JSON results file | Full metrics and per-class statistics |
 
-```bash
-# Evaluate a model (auto-detects architecture)
-python src/evaluate.py --model outputs/best.pt --split val
+---
 
-# Evaluate on test set
-python src/evaluate.py --model outputs/best.pt --split test
+## 🔍 Error Gallery
 
-# Skip error gallery for faster evaluation
-python src/evaluate.py --model outputs/best.pt --split val --no-error-gallery
-```
-
-### What it generates
-- **Overall accuracy** and **top-5 accuracy** metrics
-- **Per-class precision, recall, and F1 scores**
-- **Confusion matrix** visualization (`confusion_matrix.png`)
-- **JSON results** file with detailed metrics
-
-### Error Gallery Feature
-The evaluation script includes an advanced error gallery that visualizes the worst confusion patterns:
+The error gallery visualizes the **worst confusion patterns** your model makes — useful for diagnosing where and why it fails.
 
 ```bash
 python src/evaluate.py --model outputs/best.pt --split val \
@@ -169,49 +207,83 @@ python src/evaluate.py --model outputs/best.pt --split val \
     --gallery-samples-per-pair 10
 ```
 
-The error gallery generates:
-- **Image grids** showing misclassified samples for each confusion pair
-- **Metadata files** with sample indices and confusion statistics
-- **Comprehensive analysis** in markdown format
+**Generated output:**
 
-For detailed documentation on the error gallery functionality, see [`ERROR_GALLERY_README.md`](ERROR_GALLERY_README.md).
+- Image grids of misclassified samples per confusion pair
+- Metadata files with sample indices and confusion statistics
+- Full analysis report in Markdown format
 
-### Advanced Options
-- `--config`: Override auto-detected config (optional - only needed for old checkpoints)
-- `--output`: Custom path for results JSON file
-- `--gallery-top-pairs`: Number of worst confusion pairs to analyze
-- `--gallery-samples-per-pair`: Number of misclassified samples per confusion pair
-- `--dry-run`: Validate setup (model, config, dataset) without running full evaluation
-- `--cm-classes N`: Number of classes to show in confusion matrix (default: 15, use 0 for all)
-- `--quiet` / `-q`: Reduce output verbosity
+See [`ERROR_GALLERY_README.md`](ERROR_GALLERY_README.md) for detailed documentation.
 
-### Confusion Matrix Readability
+---
 
-The confusion matrix defaults to showing the 15 most confused classes for readability. Adjust with `--cm-classes`:
+## 📉 Confusion Matrix Options
+
+The confusion matrix defaults to the **15 most confused classes** for readability.
 
 ```bash
-# Show top 10 most confused classes (more focused)
+# Show top 10 most confused classes
 python src/evaluate.py --model outputs/best.pt --split val --cm-classes 10
 
-# Show all 38 classes (full matrix)
+# Show all 39 classes
 python src/evaluate.py --model outputs/best.pt --split val --cm-classes 0
 ```
 
-### Output Interpretation
-Evaluation results include:
-- **Overall Accuracy**: Percentage of correctly classified samples
-- **Top-5 Accuracy**: Percentage where correct class is in top 5 predictions
-- **Per-class Metrics**: Precision, recall, F1-score for each disease class
-- **Confusion Matrix**: Visual representation of classification patterns
+---
 
-### ClearML Integration
-Evaluation tasks are automatically logged to ClearML with:
-- Accuracy metrics tracked over time
-- Confusion matrix images uploaded as artifacts
-- Error gallery images organized by confusion pair
-- Error analysis markdown available as downloadable artifact
+## 🧪 Running Tests
 
-## Notes
-- For speed during prototyping, the config uses a 25% subset.
-- Adjust `batch_size` to fit your GPU/CPU memory.
-- To run on CPU, keep `device: cpu` in the config.
+```bash
+pytest tests/
+```
+
+Pre-commit hooks run automatically on every `git commit` to enforce code quality. To run them manually:
+
+```bash
+pre-commit run --all-files
+```
+
+---
+
+## 📈 Experiment Tracking with ClearML
+
+All training and evaluation runs are automatically logged to ClearML:
+
+- 📉 Accuracy and loss curves
+- 🖼️ Confusion matrix uploaded as an artifact
+- 🗂️ Error gallery images organized by confusion pair
+- 📄 Error analysis Markdown as a downloadable artifact
+- ⚙️ All hyperparameters captured automatically
+
+Check your ClearML project dashboard after any `train.py` or `evaluate.py` run.
+
+---
+
+## 🌐 Deployment
+
+The app is publicly deployed on **Hugging Face Spaces**:
+
+👉 [https://huggingface.co/spaces/Vinuit/PlantDiseaseCLassifier](https://huggingface.co/spaces/Vinuit/PlantDiseaseCLassifier)
+
+Upload any plant leaf image and receive an instant disease prediction.
+
+---
+
+## 👥 Contributors
+
+| GitHub | Name |
+|---|---|
+| [@knd8412](https://github.com/knd8412) | Kamyar Nadarkhani |
+| [@Vinuitik](https://github.com/Vinuitik) | Vinuitik |
+| [@k23099462](https://github.com/k23099462) | Jaroslav Rakoto-Miklas |
+| [@SoroushSoroush20041383](https://github.com/Soroush20041383) | Soroush |
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
+
+---
+
+*Built with 🌱 for plant health and deep learning.*
