@@ -280,10 +280,4 @@ Upload any plant leaf image and receive an instant disease prediction.
 
 ---
 
-## 📄 License
-
-This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
-
----
-
 *Built with 🌱 for plant health and deep learning.*
